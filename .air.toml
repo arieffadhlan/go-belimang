@@ -1,0 +1,23 @@
+root = "."
+tmp_dir = ".air"
+
+[build]
+  cmd = "go build -o ./.air/main ./cmd"
+  bin = "./.air/main"
+  full_bin = "./.air/main"
+
+  include_ext = ["go", "tpl", "tmpl", "html"]
+  exclude_dir = [".air", "migration"]
+
+  exclude_regex = ["_test.go"]
+
+  delay = 1000     
+  rerun_delay = 500
+  log = "build-errors.log"
+
+[log]
+  time = true
+  silent = false
+
+[screen]
+  clear_on_rebuild = true
