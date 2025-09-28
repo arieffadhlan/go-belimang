@@ -1,12 +1,11 @@
 package repository
 
 import (
-	"belimang/internal/entities"
-	"belimang/internal/utils"
 	"context"
-
+	"belimang/internal/utils"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"belimang/internal/entities"
 )
 
 type AuthRepository struct {
@@ -26,7 +25,7 @@ func (r AuthRepository) CreateUser(ctx context.Context, tx pgx.Tx, req entities.
 
 	query := `
 		INSERT INTO users (
-			id, 
+			email,
 			username, 
 			password, 
 			is_admin
@@ -35,7 +34,7 @@ func (r AuthRepository) CreateUser(ctx context.Context, tx pgx.Tx, req entities.
 			$1, 
 			$2, 
 			$3, 
-			$4
+			$4 
 		)
 		RETURNING id, is_admin
 	`
@@ -44,7 +43,7 @@ func (r AuthRepository) CreateUser(ctx context.Context, tx pgx.Tx, req entities.
 	err := tx.QueryRow(
 		ctx,
 		query,
-		req.Id,
+		req.Email,
 		req.Username,
 		req.Password,
 		req.IsAdmin,
@@ -65,12 +64,16 @@ func (r AuthRepository) GetUserByUsername(ctx context.Context, name string) (ent
 		return entities.User{}, err
 	}
 
-	query := `SELECT id, is_admin FROM users WHERE username = $1 LIMIT 1`
+	query := `SELECT id, password, is_admin FROM users WHERE username = $1 LIMIT 1`
 
 	usr := entities.User{}
-	err := r.db.QueryRow(ctx, query, name).Scan(&usr.Id, &usr.IsAdmin)
+	err := r.db.QueryRow(ctx, query, name).Scan(&usr.Id, &usr.Password, &usr.IsAdmin)
 	if err != nil {
-		return entities.User{}, utils.NewInternal("user not found")
+		if err == pgx.ErrNoRows {
+			return entities.User{}, utils.NewNotFound("users not found")
+		} else {
+			return entities.User{}, utils.NewInternal("failed get user")
+		}
 	}
 
 	return usr, nil
@@ -81,12 +84,16 @@ func (r AuthRepository) GetUserByMailAddr(ctx context.Context, mail string) (ent
 		return entities.User{}, err
 	}
 
-	query := `SELECT id, is_admin FROM users WHERE email = $1 LIMIT 1`
+	query := `SELECT id, password, is_admin FROM users WHERE email = $1 LIMIT 1`
 
 	usr := entities.User{}
-	err := r.db.QueryRow(ctx, query, mail).Scan(&usr.Id, &usr.IsAdmin)
+	err := r.db.QueryRow(ctx, query, mail).Scan(&usr.Id, &usr.Password, &usr.IsAdmin)
 	if err != nil {
-		return entities.User{}, utils.NewInternal("user not found")
+		if err == pgx.ErrNoRows {
+			return entities.User{}, utils.NewNotFound("users not found")
+		} else {
+			return entities.User{}, utils.NewInternal("failed get user")
+		}
 	}
 
 	return usr, nil

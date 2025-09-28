@@ -2,14 +2,14 @@ package main
 
 import (
 	"belimang/internal/config"
-	"belimang/internal/repository"
 	"belimang/internal/handlers"
-	"belimang/internal/services"
+	"belimang/internal/repository"
 	"belimang/internal/route"
+	"belimang/internal/services"
 	"context"
-	"syscall"
-	"os/signal"
 	"net/http"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -35,33 +35,34 @@ func main() {
 	}()
 
 	v := validator.New()
-	
+
 	r := chi.NewRouter()
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Logger)
 
 	repository.SetPool(dbp)
-	
+
 	authRepository := repository.NewAuthRepository(dbp)
 	// merchantRepository := repository.NewMerchantRepository(db)
 	// purchaseRepository := repository.NewPurchaseRepository(db)
 
-	authService := services.NewAuthService(authRepository)
+	hashingPool := services.NewHashingPool(2, 40)
+	authService := services.NewAuthService(authRepository, hashingPool)
 	// fileService := services.NewFileService(cfg)
 	// merchantService := services.NewMerchantService(merchantRepository)
 	// purchaseService := services.NewPurchaseService(purchaseRepository)
 
-	authHandler := handlers.NewAuthHandler(v, authService)
-	// fileHandler := handlers.NewFileHandler(v, fileService)
-	// merchantHandler := handlers.NewMerchantHandler(v, merchantService)
-	// purchaseHandler := handlers.NewPurchaseHandler(v, purchaseService)
+	authHandler := handlers.NewAuthHandler(authService, v)
+	// fileHandler := handlers.NewFileHandler(fileService, v)
+	// merchantHandler := handlers.NewMerchantHandler(merchantService, v)
+	// purchaseHandler := handlers.NewPurchaseHandler(purchaseService, v)
 
 	r.Route("/v1", func(v1 chi.Router) {
 		v1.Get("/health-check", func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.Write([]byte(`{"status":"ok"}`))
 		})
-		
+
 		route.RegisterAuthRoutes(v1, authHandler)
 		// route.RegisterFileRoutes(v1, fileHandler)
 		// route.RegisterMerchantRoutes(v1, merchantHandler)
@@ -81,7 +82,7 @@ func main() {
 	go func() {
 		log.Info().Str("port", cfg.Port).Msg("server running")
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			 log.Fatal().Err(err).Msg("could not start server")
+			log.Fatal().Err(err).Msg("could not start server")
 		}
 	}()
 
@@ -91,7 +92,7 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {
-		 log.Fatal().Err(err).Msg("server forced to shutdown")
+		log.Fatal().Err(err).Msg("server forced to shutdown")
 	}
 
 	log.Info().Msg("server exited")

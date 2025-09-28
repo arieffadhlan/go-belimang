@@ -1,0 +1,29 @@
+services:
+  postgres:
+    container_name: belimang-postgres
+    image: postgres:18-alpine
+    ports:
+      - "${DB_PORT}:5432"
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASS}
+      POSTGRES_DB: ${DB_NAME}
+    restart: unless-stopped
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    env_file: .env
+    networks:
+      - belimang-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      interval: 10s
+      start_period: 10s
+      retries: 5
+      timeout: 5s
+
+volumes:
+  postgres_data:
+
+networks:
+  belimang-network:
+    driver: bridge

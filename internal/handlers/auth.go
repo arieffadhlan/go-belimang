@@ -12,14 +12,14 @@ import (
 )
 
 type AuthHandler struct {
-	v       *validator.Validate
 	service services.AuthService
+	validation *validator.Validate
 }
 
-func NewAuthHandler(v *validator.Validate, service services.AuthService) AuthHandler {
+func NewAuthHandler(service services.AuthService, validation *validator.Validate) AuthHandler {
 	return AuthHandler{
-		v:       v,
 		service: service,
+		validation: validation,
 	}
 }
 
@@ -32,15 +32,16 @@ func (h AuthHandler) SignUp(w http.ResponseWriter, r *http.Request, role string)
 		return
 	}
 
-	if err := h.v.Struct(req); err != nil {
+	if err := h.validation.Struct(req); err != nil {
 		SendErrorResponse(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	usr := entities.User{
+		Email: 	req.Email,
+		IsAdmin:  role == "admin",
 		Username: req.Username,
 		Password: req.Password,
-		IsAdmin:  role == "admin",
 	}
 
 	t, err := h.service.SignUp(ctx, usr)
@@ -50,6 +51,8 @@ func (h AuthHandler) SignUp(w http.ResponseWriter, r *http.Request, role string)
 		} else {
 			SendErrorResponse(w, http.StatusInternalServerError, err.Error())
 		}
+
+		return
 	}
 
 	SendResponse(w, http.StatusCreated, t)
@@ -64,15 +67,15 @@ func (h AuthHandler) SignIn(w http.ResponseWriter, r *http.Request, role string)
 		return
 	}
 
-	if err := h.v.Struct(req); err != nil {
+	if err := h.validation.Struct(req); err != nil {
 		SendErrorResponse(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	usr := entities.User{
+		IsAdmin:  role == "admin",
 		Username: req.Username,
 		Password: req.Password,
-		IsAdmin:  role == "admin",
 	}
 
 	t, err := h.service.SignIn(ctx, usr)
@@ -82,7 +85,9 @@ func (h AuthHandler) SignIn(w http.ResponseWriter, r *http.Request, role string)
 		} else {
 			SendErrorResponse(w, http.StatusInternalServerError, err.Error())
 		}
+
+		return
 	}
 
-	SendResponse(w, http.StatusCreated, t)
+	SendResponse(w, http.StatusOK, t)
 }
