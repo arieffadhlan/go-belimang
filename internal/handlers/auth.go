@@ -28,12 +28,12 @@ func (h AuthHandler) SignUp(w http.ResponseWriter, r *http.Request, role string)
 	req := dto.SignUpRequest{}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		SendErrorResponse(w, http.StatusBadRequest, err.Error())
+		utils.SendErrorResponse(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	if err := h.validation.Struct(req); err != nil {
-		SendErrorResponse(w, http.StatusBadRequest, err.Error())
+		utils.SendErrorResponse(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -47,15 +47,15 @@ func (h AuthHandler) SignUp(w http.ResponseWriter, r *http.Request, role string)
 	t, err := h.service.SignUp(ctx, usr)
 	if err != nil {
 		if appErr, ok := err.(utils.AppError); ok {
-			SendErrorResponse(w, appErr.StatusCode, appErr.Message)
+			utils.SendErrorResponse(w, appErr.StatusCode, appErr.Message)
 		} else {
-			SendErrorResponse(w, http.StatusInternalServerError, err.Error())
+			utils.SendErrorResponse(w, http.StatusInternalServerError, err.Error())
 		}
 
 		return
 	}
 
-	SendResponse(w, http.StatusCreated, t)
+	utils.SendResponse(w, http.StatusCreated, t)
 }
 
 func (h AuthHandler) SignIn(w http.ResponseWriter, r *http.Request, role string) {
@@ -63,12 +63,12 @@ func (h AuthHandler) SignIn(w http.ResponseWriter, r *http.Request, role string)
 	req := dto.SignInRequest{}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		SendErrorResponse(w, http.StatusBadRequest, err.Error())
+		utils.SendErrorResponse(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	if err := h.validation.Struct(req); err != nil {
-		SendErrorResponse(w, http.StatusBadRequest, err.Error())
+		utils.SendErrorResponse(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -81,13 +81,13 @@ func (h AuthHandler) SignIn(w http.ResponseWriter, r *http.Request, role string)
 	t, err := h.service.SignIn(ctx, usr)
 	if err != nil {
 		if appErr, ok := err.(utils.AppError); ok {
-			SendErrorResponse(w, appErr.StatusCode, appErr.Message)
+			utils.SendErrorResponse(w, appErr.StatusCode, appErr.Message)
 		} else {
-			SendErrorResponse(w, http.StatusInternalServerError, err.Error())
+			utils.SendErrorResponse(w, http.StatusInternalServerError, err.Error())
 		}
 
 		return
 	}
 
-	SendResponse(w, http.StatusOK, t)
+	utils.SendResponse(w, http.StatusOK, t)
 }
