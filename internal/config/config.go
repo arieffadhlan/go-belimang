@@ -31,7 +31,7 @@ type Config struct {
 
 func LoadsAllAppConfig() (Config, error) {
 	_ = godotenv.Load()
-	
+
 	return Config{
 		Port:      os.Getenv("APP_PORT"),
 		Envs:      os.Getenv("APP_ENVS"),
@@ -59,7 +59,7 @@ func InitsDBConnection(cfg Config) (*pgxpool.Pool, error) {
 
 	poolCfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
-		 return nil, fmt.Errorf("failed to parse pgconfig: %w", err)
+		return nil, fmt.Errorf("failed to parse pgconfig: %w", err)
 	}
 
 	poolCfg.MaxConns = 50
@@ -72,11 +72,11 @@ func InitsDBConnection(cfg Config) (*pgxpool.Pool, error) {
 
 	dbpool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {
-		 return nil, fmt.Errorf("failed to create pgpool: %w", err)
+		return nil, fmt.Errorf("failed to create pgpool: %w", err)
 	}
 
 	if err := dbpool.Ping(ctx); err != nil {
-		 return nil, fmt.Errorf("failed to ping database: %w", err)
+		return nil, fmt.Errorf("failed to ping database: %w", err)
 	}
 
 	return dbpool, nil

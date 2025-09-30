@@ -21,16 +21,16 @@ import (
 func main() {
 	cfg, err := config.LoadsAllAppConfig()
 	if err != nil {
-		 log.Fatal().Err(err)
+		log.Fatal().Err(err)
 	}
 
 	dbp, err := config.InitsDBConnection(cfg)
 	if err != nil {
-		 log.Fatal().Err(err)
+		log.Fatal().Err(err)
 	}
 	defer func() {
 		if dbp != nil {
-			 dbp.Close()
+			dbp.Close()
 		}
 	}()
 
@@ -48,12 +48,12 @@ func main() {
 
 	hashingPool := services.NewHashingPool(2, 40)
 	authService := services.NewAuthService(authRepository, hashingPool)
-	// fileService := services.NewFileService(cfg)
+	fileService := services.NewFileService(cfg)
 	// merchantService := services.NewMerchantService(merchantRepository)
 	// purchaseService := services.NewPurchaseService(purchaseRepository)
 
 	authHandler := handlers.NewAuthHandler(authService, v)
-	// fileHandler := handlers.NewFileHandler(fileService, v)
+	fileHandler := handlers.NewFileHandler(fileService)
 	// merchantHandler := handlers.NewMerchantHandler(merchantService, v)
 	// purchaseHandler := handlers.NewPurchaseHandler(purchaseService, v)
 
@@ -64,7 +64,7 @@ func main() {
 		})
 
 		route.RegisterAuthRoutes(v1, authHandler)
-		// route.RegisterFileRoutes(v1, fileHandler)
+		route.RegisterFileRoutes(v1, &fileHandler)
 		// route.RegisterMerchantRoutes(v1, merchantHandler)
 		// route.RegisterPurchaseRoutes(v1, purchaseHandler)
 	})
