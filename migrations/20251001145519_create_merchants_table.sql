@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS merchants (
 );
 
 CREATE TABLE IF NOT EXISTS items (
-    item_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     merchant_id TEXT NOT NULL REFERENCES merchants(id) ON DELETE CASCADE,
     name VARCHAR(30) NOT NULL CHECK (char_length(name) >= 2),
     product_category product_category_enum NOT NULL,
