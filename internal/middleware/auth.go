@@ -48,11 +48,11 @@ func Protected(requireAdmin bool) func(http.Handler) http.Handler {
 			isAdmin, _ := claims["is_admin"].(bool)
 
 			if requireAdmin && !isAdmin {
-				utils.SendErrorResponse(w, http.StatusForbidden, "forbidden")
+				utils.SendErrorResponse(w, http.StatusUnauthorized, "admin access required")
 				return
 			}
 			if !requireAdmin && isAdmin {
-				utils.SendErrorResponse(w, http.StatusForbidden, "forbidden")
+				utils.SendErrorResponse(w, http.StatusUnauthorized, "users access required")
 				return
 			}
 

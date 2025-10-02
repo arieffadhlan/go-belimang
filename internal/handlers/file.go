@@ -17,27 +17,32 @@ func NewFileHandler(service services.FileService) FileHandler {
 }
 
 func (h FileHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	file, handler, err := r.FormFile("file")
+	const (
+		MinFileSize = 1024 * 10       // 10 KB
+		MaxFileSize = 1024 * 1024 * 2 // 2 MB
+	)
 
+	if r.ContentLength > 0 && r.ContentLength > (MaxFileSize+1024) {
+		utils.SendErrorResponse(w, http.StatusBadRequest, "file size is upper maximum file size")
+		return
+	}
+
+	// Limit the maximum bytes that can be read from the body.1024*10 is the overhead tolerance
+	r.Body = http.MaxBytesReader(w, r.Body, int64(MaxFileSize+1024*10))
+
+	file, handler, err := r.FormFile("file")
 	if err != nil {
 		utils.SendErrorResponse(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	defer file.Close()
 
-	// size limits
-	const (
-		minFileSize = 10 * 1024       // 10 KB
-		maxFileSize = 2 * 1024 * 1024 // 2 MB
-	)
-
-	if handler.Size < minFileSize {
+	if handler.Size < MinFileSize {
 		utils.SendErrorResponse(w, http.StatusBadRequest, "file size is too small (minimum 10KB required)")
 		return
 	}
 
-	if handler.Size > maxFileSize {
+	if handler.Size > MaxFileSize {
 		utils.SendErrorResponse(w, http.StatusBadRequest, "file size exceeds the maximum limit of 2MB")
 		return
 	}
@@ -47,11 +52,15 @@ func (h FileHandler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	uploadedFile, err := h.service.UploadImage(ctx, handler, file, handler.Filename)
+	uploadedFile, err := h.service.UploadImage(r.Context(), file, handler, handler.Filename)
 	if err != nil {
-		utils.SendErrorResponse(w, http.StatusBadRequest, err.Error())
+		if appErr, ok := err.(utils.AppError); ok {
+			utils.SendErrorResponse(w, appErr.StatusCode, appErr.Message)
+		} else {
+			utils.SendErrorResponse(w, http.StatusInternalServerError, err.Error())
+		}
 		return
 	}
 
-	utils.SendResponse(w, http.StatusAccepted, uploadedFile)
+	utils.SendResponse(w, http.StatusOK, uploadedFile)
 }

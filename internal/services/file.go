@@ -15,35 +15,32 @@ type FileService struct {
 	cfg   config.Config
 }
 
-func NewFileService(cfg config.Config) FileService {
-
-	miniClient, _ := MinioClientConnection(cfg)
-
+func NewFileService(client *minio.Client, config config.Config) FileService {
 	return FileService{
-		minio: miniClient,
-		cfg:   cfg,
+		minio: client,
+		cfg:   config,
 	}
 }
 
-func (s FileService) UploadImage(ctx context.Context, file *multipart.FileHeader, src multipart.File, fileName string) (dto.FileResponse, error) {
+func (s FileService) UploadImage(ctx context.Context, src multipart.File, file *multipart.FileHeader, objectName string) (dto.FileResponse, error) {
 	bucketName := s.cfg.BucketName
 
 	_, err := s.minio.PutObject(
 		ctx,
 		bucketName,
-		fileName,
+		objectName,
 		src,
 		file.Size,
 		minio.PutObjectOptions{ContentType: file.Header.Get("Content-Type")},
 	)
 
 	if err != nil {
-		return dto.FileResponse{}, err
+		 return dto.FileResponse{}, err
 	}
 
-	url, err := s.minio.PresignedGetObject(ctx, bucketName, fileName, time.Hour*24*7, nil)
+	url, err := s.minio.PresignedGetObject(ctx, bucketName, objectName, 7*24*time.Hour, nil)
 	if err != nil {
-		return dto.FileResponse{}, err
+		 return dto.FileResponse{}, err
 	}
 
 	return dto.FileResponse{

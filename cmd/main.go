@@ -19,12 +19,12 @@ import (
 )
 
 func main() {
-	cfg, err := config.LoadsAllAppConfig()
+	cfg, err := config.LoadAllAppConfig()
 	if err != nil {
 		log.Fatal().Err(err)
 	}
 
-	dbp, err := config.InitsDBConnection(cfg)
+	dbp, err := config.InitDBConnection(cfg)
 	if err != nil {
 		log.Fatal().Err(err)
 	}
@@ -33,6 +33,11 @@ func main() {
 			dbp.Close()
 		}
 	}()
+
+	minioClient, err := config.InitMCConncection(cfg)
+	if err != nil {
+		log.Fatal().Err(err)
+	}
 
 	v := validator.New()
 
@@ -48,7 +53,7 @@ func main() {
 
 	hashingPool := services.NewHashingPool(2, 40)
 	authService := services.NewAuthService(authRepository, hashingPool)
-	fileService := services.NewFileService(cfg)
+	fileService := services.NewFileService(minioClient, cfg)
 	// merchantService := services.NewMerchantService(merchantRepository)
 	// purchaseService := services.NewPurchaseService(purchaseRepository)
 

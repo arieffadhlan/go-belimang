@@ -1,31 +1,16 @@
 package services
 
 import (
-	"belimang/internal/config"
 	"bytes"
 	"image"
 	"image/jpeg"
+	"mime"
 	"mime/multipart"
 	"path/filepath"
 	"strings"
 
-	"github.com/minio/minio-go/v7"
-	"github.com/minio/minio-go/v7/pkg/credentials"
 	"golang.org/x/image/draw"
 )
-
-func MinioClientConnection(cfg config.Config) (*minio.Client, error) {
-	minioClient, err := minio.New(cfg.Endpoint, &minio.Options{
-		Creds:  credentials.NewStaticV4(cfg.AccessKey, cfg.SecretKey, ""),
-		Secure: cfg.UseSSL,
-	})
-
-	if err != nil {
-		return nil, err
-	}
-
-	return minioClient, nil
-}
 
 func CompressThumbnail(fileHeader *multipart.FileHeader, img image.Image, maxKB int) ([]byte, string, error) {
 	var buf bytes.Buffer
@@ -61,26 +46,14 @@ func CompressThumbnail(fileHeader *multipart.FileHeader, img image.Image, maxKB 
 }
 
 func IsAllowedFileType(fileName, fileType string) bool {
-	allowedMimeTypes := map[string]bool{
-		"image/jpeg": true,
-		"image/jpg":  true,
+	ext := strings.ToLower(filepath.Ext(fileName))
+
+	if fileType == "" || fileType == "application/octet-stream" {
+		fileType = mime.TypeByExtension(ext)
 	}
 
-	allowedExtensions := map[string]bool{
-		".jpg":  true,
-		".jpeg": true,
-	}
+	allowedMimeTypes := map[string]bool{"image/jpeg": true, "image/jpg": true}
+	allowedExtension := map[string]bool{".jpg": true, ".jpeg": true}
 
-	if !allowedMimeTypes[fileType] {
-		return false
-	}
-
-	if fileType == "application/octet-stream" {
-		ext := strings.ToLower(filepath.Ext(fileName))
-		if !allowedExtensions[ext] {
-			return false
-		}
-	}
-
-	return true
+	return allowedMimeTypes[fileType] && allowedExtension[ext]
 }
