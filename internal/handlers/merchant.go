@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
 )
 
@@ -95,6 +96,92 @@ func (h MerchantHandler) GetAllMerchant(w http.ResponseWriter, r *http.Request) 
 
 	// Call service
 	merchants, err := h.service.GetMerchants(ctx, filter)
+	if err != nil {
+		if appErr, ok := err.(utils.AppError); ok {
+			utils.SendErrorResponse(w, appErr.StatusCode, appErr.Message)
+		} else {
+			utils.SendErrorResponse(w, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+
+	// Always return 200 with list (can be empty)
+	utils.SendResponse(w, http.StatusOK, merchants)
+}
+
+func (h MerchantHandler) CreateMerchantItems(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	req := dto.ItemMerchantRequest{}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		utils.SendErrorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if err := h.validation.Struct(req); err != nil {
+		utils.SendErrorResponse(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	merchantId := chi.URLParam(r, "merchantId")
+
+	item := entities.MerchantItem{
+		Name:            req.Name,
+		ProductCategory: entities.ProductCategory(req.ProductCategory),
+		Price:           req.Price,
+		ImageURL:        req.ImageURL,
+		MerchantID:      merchantId,
+	}
+
+	itm, err := h.service.CreateMerchantItems(ctx, item)
+	if err != nil {
+		if appErr, ok := err.(utils.AppError); ok {
+			utils.SendErrorResponse(w, appErr.StatusCode, appErr.Message)
+		} else {
+			utils.SendErrorResponse(w, http.StatusInternalServerError, err.Error())
+		}
+
+		return
+	}
+
+	utils.SendResponse(w, http.StatusCreated, itm)
+}
+
+func (h MerchantHandler) GetAllMerchantItems(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	q := r.URL.Query()
+
+	filter := entities.ItemFilter{
+		Name:            q.Get("name"),
+		SortCreatedAt:   strings.ToLower(q.Get("createdAt")),
+		ItemID:          q.Get("itemId"),
+		ProductCategory: q.Get("productCategory"),
+	}
+
+	// Parse limit
+	if l := q.Get("limit"); l != "" {
+		if val, err := strconv.Atoi(l); err == nil {
+			filter.Limit = val
+		} else {
+			utils.SendErrorResponse(w, http.StatusBadRequest, "invalid limit parameter")
+			return
+		}
+	}
+
+	// Parse offset
+	if o := q.Get("offset"); o != "" {
+		if val, err := strconv.Atoi(o); err == nil {
+			filter.Offset = val
+		} else {
+			utils.SendErrorResponse(w, http.StatusBadRequest, "invalid offset parameter")
+			return
+		}
+	}
+
+	merchantId := chi.URLParam(r, "merchantId")
+
+	// Call service
+	merchants, err := h.service.GetAllMerchantItems(ctx, merchantId, filter)
 	if err != nil {
 		if appErr, ok := err.(utils.AppError); ok {
 			utils.SendErrorResponse(w, appErr.StatusCode, appErr.Message)

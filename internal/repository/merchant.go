@@ -30,7 +30,7 @@ func (r MerchantRepository) CreateMerchant(ctx context.Context, tx pgx.Tx, req e
 	query := `
 		INSERT INTO merchants (name, merchant_category, image_url, location)
 		VALUES ($1, $2, $3, ST_SetSRID(ST_MakePoint($4, $5), 4326)::GEOGRAPHY)
-		RETURNING merchant_id, name, merchant_category, image_url,
+		RETURNING id, name, merchant_category, image_url,
 		          ST_Y(location::geometry) AS lat,
 		          ST_X(location::geometry) AS long,
 		          created_at
@@ -49,6 +49,29 @@ func (r MerchantRepository) CreateMerchant(ctx context.Context, tx pgx.Tx, req e
 
 	if err != nil {
 		return entities.Merchant{}, utils.NewInternal("failed create merchant")
+	}
+
+	return merchant, nil
+}
+
+func (r MerchantRepository) GetMerchantById(ctx context.Context, tx pgx.Tx, merchantId string) (entities.Merchant, error) {
+	if err := ctx.Err(); err != nil {
+		return entities.Merchant{}, err
+	}
+
+	query := `
+			SELECT id, name, merchant_category, image_url, location, created_at
+        FROM merchants WHERE id = $1
+	`
+	merchant := entities.Merchant{}
+
+	err := r.db.QueryRow(ctx, query, merchantId).Scan(&merchant.ID, &merchant.Name, &merchant.MerchantCategory, &merchant.ImageURL, &merchant.CreatedAt)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return entities.Merchant{}, utils.NewNotFound("users not found")
+		} else {
+			return entities.Merchant{}, utils.NewInternal("failed get user")
+		}
 	}
 
 	return merchant, nil
@@ -149,6 +172,134 @@ func (r MerchantRepository) GetMerchants(ctx context.Context, tx pgx.Tx, filter 
 
 	return dto.MerchantsResponse{
 		Data: merchants,
+		Meta: dto.Meta{
+			Limit:  limit,
+			Offset: offset,
+			Total:  total,
+		},
+	}, nil
+}
+
+func (r MerchantRepository) CreateItemMerchant(ctx context.Context, tx pgx.Tx, req entities.MerchantItem) (entities.MerchantItem, error) {
+	if err := ctx.Err(); err != nil {
+		return entities.MerchantItem{}, err
+	}
+
+	query := `
+		INSERT INTO items (merchant_id, name, product_category, price, image_url)
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING id, merchant_id, name, product_category, price, image_url, created_at
+	`
+
+	merchantItem := entities.MerchantItem{}
+
+	err := tx.QueryRow(ctx, query, req.MerchantID, req.Name, req.ProductCategory, req.Price, req.ImageURL).Scan(&merchantItem.ID)
+
+	if err != nil {
+		return entities.MerchantItem{}, utils.NewInternal("failed create item merchant")
+	}
+
+	return merchantItem, nil
+}
+
+func (r MerchantRepository) GetItems(
+	ctx context.Context,
+	tx pgx.Tx,
+	merchantId string,
+	filter entities.ItemFilter,
+) (dto.ItemsResponse, error) {
+	if err := ctx.Err(); err != nil {
+		return dto.ItemsResponse{}, err
+	}
+
+	args := []interface{}{merchantId}
+	conditions := []string{"merchant_id = $1"} // required filter
+	argIndex := 2
+
+	if filter.ItemID != "" {
+		conditions = append(conditions, fmt.Sprintf("id = $%d", argIndex))
+		args = append(args, filter.ItemID)
+		argIndex++
+	}
+
+	if filter.Name != "" {
+		conditions = append(conditions, fmt.Sprintf("LOWER(name) LIKE $%d", argIndex))
+		args = append(args, "%"+strings.ToLower(filter.Name)+"%")
+		argIndex++
+	}
+
+	if filter.ProductCategory != "" {
+		conditions = append(conditions, fmt.Sprintf("product_category = $%d", argIndex))
+		args = append(args, filter.ProductCategory)
+		argIndex++
+	}
+
+	// Base query
+	baseQuery := `
+		SELECT 
+			item_id,
+			name,
+			product_category,
+			price,
+			image_url,
+			created_at
+		FROM items
+		WHERE ` + strings.Join(conditions, " AND ")
+
+	// Sorting
+	if filter.SortCreatedAt == "asc" || filter.SortCreatedAt == "desc" {
+		baseQuery += fmt.Sprintf(" ORDER BY created_at %s", filter.SortCreatedAt)
+	}
+
+	// Pagination
+	limit := 5
+	offset := 0
+	if filter.Limit > 0 {
+		limit = filter.Limit
+	}
+	if filter.Offset >= 0 {
+		offset = filter.Offset
+	}
+	baseQuery += fmt.Sprintf(" LIMIT %d OFFSET %d", limit, offset)
+
+	// Execute query
+	rows, err := tx.Query(ctx, baseQuery, args...)
+	if err != nil {
+		return dto.ItemsResponse{}, utils.NewInternal("failed to query items")
+	}
+	defer rows.Close()
+
+	var items []dto.Item
+	for rows.Next() {
+		var it dto.Item
+		err := rows.Scan(
+			&it.ID,
+			&it.Name,
+			&it.ProductCategory,
+			&it.Price,
+			&it.ImageURL,
+			&it.CreateAt,
+		)
+		if err != nil {
+			return dto.ItemsResponse{}, utils.NewInternal("failed to scan item")
+		}
+		items = append(items, it)
+	}
+
+	// Count query for meta
+	countQuery := `
+		SELECT COUNT(*)
+		FROM items
+		WHERE ` + strings.Join(conditions, " AND ")
+
+	var total int
+	err = tx.QueryRow(ctx, countQuery, args...).Scan(&total)
+	if err != nil {
+		return dto.ItemsResponse{}, utils.NewInternal("failed to count items")
+	}
+
+	return dto.ItemsResponse{
+		Data: items,
 		Meta: dto.Meta{
 			Limit:  limit,
 			Offset: offset,
