@@ -3,65 +3,45 @@ package entities
 import "time"
 
 type (
-	Merchant struct {
-		ID               string           `db:"id"`
-		Name             string           `db:"name"`
-		MerchantCategory MerchantCategory `db:"merchant_category"`
-		ImageURL         string           `db:"image_url"`
-		Location         Location         `db:"location"`
-		CreatedAt        time.Time        `db:"created_at"`
-	}
-
-	MerchantItem struct {
-		ID              string          `db:"id"`
-		MerchantID      string          `db:"merchant_id"`
-		Name            string          `db:"name"`
-		ProductCategory ProductCategory `db:"product_category"`
-		Price           int             `db:"price"`
-		ImageURL        string          `db:"image_url"`
-		CreatedAt       time.Time       `db:"created_at"`
-	}
-
 	Location struct {
 		Lat  float64
 		Long float64
 	}
 
-	MerchantCategory string
-	ProductCategory  string
+	Merchant struct {
+		ID        string `db:"id"`
+		Name      string `db:"name"`
+		Category  string `db:"category"`
+		ImageURL  string `db:"image_url"`
+		Location  Location
+		CreatedAt time.Time `db:"created_at"`
+	}
+
+	MerchantItem struct {
+		ID         string    `db:"id"`
+		Name       string    `db:"name"`
+		MerchantID string    `db:"merchant_id"`
+		Category   string    `db:"category"`
+		ImageURL   string    `db:"image_url"`
+		Price      int       `db:"price"`
+		CreatedAt  time.Time `db:"created_at"`
+	}
 
 	MerchantFilter struct {
-		MerchantID       string
-		Name             string
-		MerchantCategory string
 		Limit            int
+		CreatedAt        string
+		Name             string
+		MerchantID       string
+		MerchantCategory string
 		Offset           int
-		SortCreatedAt    string // "asc" or "desc"
 	}
 
-	ItemFilter struct {
-		ItemID          string
+	MerchantItemFilter struct {
 		Limit           int
-		Offset          int
+		CreatedAt       string
 		Name            string
+		ItemID          string
 		ProductCategory string
-		SortCreatedAt   string // "asc" or "desc"
+		Offset          int
 	}
-)
-
-const (
-	SmallRestaurant       MerchantCategory = "SmallRestaurant"
-	MediumRestaurant      MerchantCategory = "MediumRestaurant"
-	LargeRestaurant       MerchantCategory = "LargeRestaurant"
-	MerchandiseRestaurant MerchantCategory = "MerchandiseRestaurant"
-	BoothKiosk            MerchantCategory = "BoothKiosk"
-	ConvenienceStore      MerchantCategory = "ConvenienceStore"
-)
-
-const (
-	Beverage   ProductCategory = "Beverage"
-	Food       ProductCategory = "Food"
-	Snack      ProductCategory = "Snack"
-	Condiments ProductCategory = "Condiments"
-	Additions  ProductCategory = "Additions"
 )

@@ -17,293 +17,261 @@ type MerchantRepository struct {
 }
 
 func NewMerchantRepository(db *pgxpool.Pool) MerchantRepository {
-	return MerchantRepository{
-		db: db,
-	}
+	return MerchantRepository{db: db}
 }
 
 func (r MerchantRepository) CreateMerchant(ctx context.Context, tx pgx.Tx, req entities.Merchant) (entities.Merchant, error) {
 	if err := ctx.Err(); err != nil {
-		return entities.Merchant{}, err
+		 return entities.Merchant{}, err
 	}
 
 	query := `
-		INSERT INTO merchants (name, merchant_category, image_url, location)
-		VALUES ($1, $2, $3, ST_SetSRID(ST_MakePoint($4, $5), 4326)::GEOGRAPHY)
-		RETURNING id, name, merchant_category, image_url,
-		          ST_Y(location::geometry) AS lat,
-		          ST_X(location::geometry) AS long,
-		          created_at
+		INSERT INTO merchants (
+			name, 
+			image_url, 
+			category, 
+			location
+		)
+		VALUES (
+			$1, $2, $3, 
+			ST_SetSRID(ST_MakePoint($4, $5), 4326)::GEOGRAPHY
+		)
+		RETURNING id
 	`
 
-	merchant := entities.Merchant{}
-	err := tx.QueryRow(
-		ctx,
-		query,
+	res := entities.Merchant{}
+	err := tx.QueryRow(ctx, query,
 		req.Name,
-		req.MerchantCategory,
 		req.ImageURL,
-		req.Location.Long,
-		req.Location.Lat,
-	).Scan(&merchant.ID)
+		req.Category,
+		req.Location.Long, req.Location.Lat,
+	).Scan(&res.ID)
 
 	if err != nil {
-		return entities.Merchant{}, utils.NewInternal("failed create merchant")
+		 return entities.Merchant{}, utils.NewInternal("failed create merchant")
 	}
 
-	return merchant, nil
+	return res, nil
 }
 
-func (r MerchantRepository) GetMerchantById(ctx context.Context, tx pgx.Tx, merchantId string) (entities.Merchant, error) {
+func (r MerchantRepository) GetMerchantById(ctx context.Context, merchantId string) (entities.Merchant, error) {
 	if err := ctx.Err(); err != nil {
-		return entities.Merchant{}, err
+		 return entities.Merchant{}, err
 	}
 
-	query := `
-			SELECT id, name, merchant_category, image_url, location, created_at
-        FROM merchants WHERE id = $1
-	`
-	merchant := entities.Merchant{}
+	query := `SELECT id FROM merchants WHERE id = $1`
 
-	err := r.db.QueryRow(ctx, query, merchantId).Scan(&merchant.ID, &merchant.Name, &merchant.MerchantCategory, &merchant.ImageURL, &merchant.CreatedAt)
+	var m entities.Merchant
+	err := r.db.QueryRow(ctx, query, merchantId).Scan(&m.ID)
+
 	if err != nil {
 		if err == pgx.ErrNoRows {
-			return entities.Merchant{}, utils.NewNotFound("users not found")
+			return entities.Merchant{}, utils.NewNotFound("merchants not found")
 		} else {
-			return entities.Merchant{}, utils.NewInternal("failed get user")
+			return entities.Merchant{}, utils.NewInternal("failed get merchant")
 		}
 	}
 
-	return merchant, nil
+	return m, nil
 }
 
-func (r MerchantRepository) GetMerchants(ctx context.Context, tx pgx.Tx, filter entities.MerchantFilter) (dto.MerchantsResponse, error) {
+func (r MerchantRepository) GetAllMerchant(ctx context.Context, filter entities.MerchantFilter) (dto.MerchantResponse, error) {
 	if err := ctx.Err(); err != nil {
-		return dto.MerchantsResponse{}, err
+		 return dto.MerchantResponse{}, err
 	}
 
-	args := []interface{}{}
-	conditions := []string{"1=1"} // always true so we can append conditions dynamically
-	argIndex := 1                 // pgx uses $1, $2... placeholders
+	conditions := []string{"1=1"}
+	args := []any{}
+	i := 1
+
+	if filter.MerchantCategory != "" {
+		conditions = append(conditions, fmt.Sprintf("category = $%d", i))
+		args = append(args, filter.MerchantCategory)
+		i++
+	}
 
 	if filter.MerchantID != "" {
-		conditions = append(conditions, fmt.Sprintf("merchant_id = $%d", argIndex))
+		conditions = append(conditions, fmt.Sprintf("id = $%d", i))
 		args = append(args, filter.MerchantID)
-		argIndex++
+		i++
 	}
 
 	if filter.Name != "" {
-		conditions = append(conditions, fmt.Sprintf("LOWER(name) LIKE $%d", argIndex))
-		args = append(args, "%"+strings.ToLower(filter.Name)+"%")
-		argIndex++
+		conditions = append(conditions, fmt.Sprintf("name ILIKE $%d", i))
+		args = append(args, "%"+filter.Name+"%")
+		i++
 	}
 
-	if filter.MerchantCategory != "" {
-		conditions = append(conditions, fmt.Sprintf("merchant_category = $%d", argIndex))
-		args = append(args, filter.MerchantCategory)
-		argIndex++
+	order := "DESC"
+	if filter.CreatedAt == "asc" || filter.CreatedAt == "desc" {
+		 order = strings.ToUpper(filter.CreatedAt)
 	}
 
-	// Base query
-	baseQuery := `
+	limit, offset := filter.Limit, filter.Offset
+	if limit <= 0 {
+		 limit = 5
+	}
+	
+	if offset < 0 {
+		 offset = 0
+	}
+
+	query := fmt.Sprintf(`
 		SELECT 
-			merchant_id,
-			name,
-			merchant_category,
-			image_url,
+			id, name, image_url, category,
+			ST_X(location::geometry) as lon,
 			ST_Y(location::geometry) as lat,
-			ST_X(location::geometry) as long,
-			created_at
+			created_at, Count(*) OVER() AS total
 		FROM merchants
-		WHERE ` + strings.Join(conditions, " AND ")
+		WHERE %s
+		ORDER BY created_at %s
+		LIMIT %d OFFSET %d
+	`, strings.Join(conditions, " AND "), order, limit, offset)
 
-	// Sorting
-	if filter.SortCreatedAt == "asc" || filter.SortCreatedAt == "desc" {
-		baseQuery += fmt.Sprintf(" ORDER BY created_at %s", filter.SortCreatedAt)
-	}
-
-	// Pagination
-	limit := 5
-	offset := 0
-	if filter.Limit > 0 {
-		limit = filter.Limit
-	}
-	if filter.Offset >= 0 {
-		offset = filter.Offset
-	}
-	baseQuery += fmt.Sprintf(" LIMIT %d OFFSET %d", limit, offset)
-
-	// Execute query
-	rows, err := tx.Query(ctx, baseQuery, args...)
+	rows, err := r.db.Query(ctx, query, args...)
 	if err != nil {
-		return dto.MerchantsResponse{}, utils.NewInternal("failed to query merchants")
+		 return dto.MerchantResponse{}, utils.NewInternal("failed to query merchants")
 	}
 	defer rows.Close()
 
-	var merchants []dto.Merchant
-	for rows.Next() {
-		var m dto.Merchant
-		err := rows.Scan(
-			&m.ID,
-			&m.Name,
-			&m.MerchantCategory,
-			&m.ImageURL,
-			&m.Location.Lat,
-			&m.Location.Long,
-			&m.CreatedAt,
-		)
-		if err != nil {
-			return dto.MerchantsResponse{}, utils.NewInternal("failed to scan merchant")
-		}
-		merchants = append(merchants, m)
-	}
-
-	// Count query for meta
-	countQuery := `
-		SELECT COUNT(*)
-		FROM merchants
-		WHERE ` + strings.Join(conditions, " AND ")
-
 	var total int
-	err = tx.QueryRow(ctx, countQuery, args...).Scan(&total)
-	if err != nil {
-		return dto.MerchantsResponse{}, utils.NewInternal("failed to count merchants")
+	var merchants []dto.Merchant
+
+	for rows.Next() {
+		cur := dto.Merchant{}
+		err := rows.Scan(
+			&cur.ID,
+			&cur.Name,
+			&cur.ImageURL,
+			&cur.Category,
+			&cur.Location.Long, &cur.Location.Lat,
+			&cur.CreatedAt,
+			&total,
+		)
+
+		if err != nil {
+			 return dto.MerchantResponse{}, utils.NewInternal("failed to scan merchant")
+		}
+
+		merchants = append(merchants, cur)
 	}
 
-	return dto.MerchantsResponse{
+	if merchants == nil {
+		 merchants = make([]dto.Merchant, 0)
+	}
+
+	return dto.MerchantResponse{
 		Data: merchants,
-		Meta: dto.Meta{
-			Limit:  limit,
-			Offset: offset,
-			Total:  total,
-		},
+		Meta: dto.Meta{Total: total, Limit: limit, Offset: offset},
 	}, nil
 }
 
-func (r MerchantRepository) CreateItemMerchant(ctx context.Context, tx pgx.Tx, req entities.MerchantItem) (entities.MerchantItem, error) {
+func (r MerchantRepository) CreateMercItem(ctx context.Context, tx pgx.Tx, req entities.MerchantItem) (entities.MerchantItem, error) {
 	if err := ctx.Err(); err != nil {
-		return entities.MerchantItem{}, err
+		 return entities.MerchantItem{}, err
 	}
 
 	query := `
-		INSERT INTO items (merchant_id, name, product_category, price, image_url)
+		INSERT INTO items (merchant_id, name, price, image_url, category)
 		VALUES ($1, $2, $3, $4, $5)
-		RETURNING id, merchant_id, name, product_category, price, image_url, created_at
+		RETURNING id
 	`
 
-	merchantItem := entities.MerchantItem{}
-
-	err := tx.QueryRow(ctx, query, req.MerchantID, req.Name, req.ProductCategory, req.Price, req.ImageURL).Scan(&merchantItem.ID)
+	res := entities.MerchantItem{}
+	err := tx.QueryRow(ctx, query, req.MerchantID, req.Name, req.Price, req.ImageURL, req.Category).Scan(&res.ID)
 
 	if err != nil {
-		return entities.MerchantItem{}, utils.NewInternal("failed create item merchant")
+		 return entities.MerchantItem{}, utils.NewInternal("failed create merchant item")
 	}
 
-	return merchantItem, nil
+	return res, nil
 }
 
-func (r MerchantRepository) GetItems(
-	ctx context.Context,
-	tx pgx.Tx,
-	merchantId string,
-	filter entities.ItemFilter,
-) (dto.ItemsResponse, error) {
+func (r MerchantRepository) GetAllMercItem(ctx context.Context, merchantId string, filter entities.MerchantItemFilter) (dto.MercItemResponse, error) {
 	if err := ctx.Err(); err != nil {
-		return dto.ItemsResponse{}, err
+		 return dto.MercItemResponse{}, err
 	}
 
-	args := []interface{}{merchantId}
-	conditions := []string{"merchant_id = $1"} // required filter
-	argIndex := 2
+	conditions := []string{"merchant_id = $1"}
+	args := []any{merchantId}
+	i := 2
+
+	if filter.ProductCategory != "" {
+		conditions = append(conditions, fmt.Sprintf("category = $%d", i))
+		args = append(args, filter.ProductCategory)
+		i++
+	}
 
 	if filter.ItemID != "" {
-		conditions = append(conditions, fmt.Sprintf("id = $%d", argIndex))
+		conditions = append(conditions, fmt.Sprintf("id = $%d", i))
 		args = append(args, filter.ItemID)
-		argIndex++
+		i++
 	}
 
 	if filter.Name != "" {
-		conditions = append(conditions, fmt.Sprintf("LOWER(name) LIKE $%d", argIndex))
-		args = append(args, "%"+strings.ToLower(filter.Name)+"%")
-		argIndex++
+		conditions = append(conditions, fmt.Sprintf("name ILIKE $%d", i))
+		args = append(args, "%"+filter.Name+"%")
+		i++
 	}
 
-	if filter.ProductCategory != "" {
-		conditions = append(conditions, fmt.Sprintf("product_category = $%d", argIndex))
-		args = append(args, filter.ProductCategory)
-		argIndex++
+	order := "DESC"
+	if filter.CreatedAt == "asc" || filter.CreatedAt == "desc" {
+		 order = strings.ToUpper(filter.CreatedAt)
 	}
 
-	// Base query
-	baseQuery := `
+	limit, offset := filter.Limit, filter.Offset
+	if limit <= 0 {
+		 limit = 5
+	}
+
+	if offset < 0 {
+		 offset = 0
+	}
+	
+	query := fmt.Sprintf(`
 		SELECT 
-			item_id,
-			name,
-			product_category,
-			price,
-			image_url,
-			created_at
-		FROM items
-		WHERE ` + strings.Join(conditions, " AND ")
+			id, name, price, image_url, category, created_at, 
+			COUNT(*) OVER() AS total
+		FROM items 
+		WHERE %s
+		ORDER BY created_at %s
+		LIMIT %d OFFSET %d
+	`, strings.Join(conditions, " AND "), order, limit, offset)
 
-	// Sorting
-	if filter.SortCreatedAt == "asc" || filter.SortCreatedAt == "desc" {
-		baseQuery += fmt.Sprintf(" ORDER BY created_at %s", filter.SortCreatedAt)
-	}
-
-	// Pagination
-	limit := 5
-	offset := 0
-	if filter.Limit > 0 {
-		limit = filter.Limit
-	}
-	if filter.Offset >= 0 {
-		offset = filter.Offset
-	}
-	baseQuery += fmt.Sprintf(" LIMIT %d OFFSET %d", limit, offset)
-
-	// Execute query
-	rows, err := tx.Query(ctx, baseQuery, args...)
+	rows, err := r.db.Query(ctx, query, args...)
 	if err != nil {
-		return dto.ItemsResponse{}, utils.NewInternal("failed to query items")
+		 return dto.MercItemResponse{}, utils.NewInternal("failed to query items")
 	}
 	defer rows.Close()
 
-	var items []dto.Item
-	for rows.Next() {
-		var it dto.Item
-		err := rows.Scan(
-			&it.ID,
-			&it.Name,
-			&it.ProductCategory,
-			&it.Price,
-			&it.ImageURL,
-			&it.CreateAt,
-		)
-		if err != nil {
-			return dto.ItemsResponse{}, utils.NewInternal("failed to scan item")
-		}
-		items = append(items, it)
-	}
-
-	// Count query for meta
-	countQuery := `
-		SELECT COUNT(*)
-		FROM items
-		WHERE ` + strings.Join(conditions, " AND ")
-
 	var total int
-	err = tx.QueryRow(ctx, countQuery, args...).Scan(&total)
-	if err != nil {
-		return dto.ItemsResponse{}, utils.NewInternal("failed to count items")
+	var items []dto.MercItem
+	
+	for rows.Next() {
+		var item dto.MercItem
+		err := rows.Scan(
+			&item.ID,
+			&item.Name,
+			&item.Price,
+			&item.ImageURL,
+			&item.Category,
+			&item.CreateAt,
+			&total,
+		)
+
+		if err != nil {
+			 return dto.MercItemResponse{}, utils.NewInternal("failed to scan merchant item")
+		}
+
+		items = append(items, item)
 	}
 
-	return dto.ItemsResponse{
+	if items == nil {
+		 items = make([]dto.MercItem, 0)
+	}
+
+	return dto.MercItemResponse{
 		Data: items,
-		Meta: dto.Meta{
-			Limit:  limit,
-			Offset: offset,
-			Total:  total,
-		},
+		Meta: dto.Meta{Total: total, Limit: limit, Offset: offset},
 	}, nil
 }
