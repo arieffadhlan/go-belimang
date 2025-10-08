@@ -6,6 +6,7 @@ import (
 	"belimang/internal/utils"
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -28,9 +29,7 @@ func (r PurchaseRepository) GetNearbyMerchants(
 		return nil, 0, err
 	}
 
-	// ====================
-	// STEP 1: Build filter merchant
-	// ====================
+	// Build dynamic WHERE
 	conds := []string{"TRUE"}
 	args := []any{}
 	i := 1
@@ -40,7 +39,6 @@ func (r PurchaseRepository) GetNearbyMerchants(
 		args = append(args, f.MerchantID)
 		i++
 	}
-
 	if f.MerchantCategory != "" {
 		validEnums := map[string]bool{
 			"SmallRestaurant": true, "MediumRestaurant": true, "LargeRestaurant": true,
@@ -53,31 +51,22 @@ func (r PurchaseRepository) GetNearbyMerchants(
 		args = append(args, f.MerchantCategory)
 		i++
 	}
-
 	if f.Name != "" {
 		conds = append(conds, fmt.Sprintf(
-			`(
-				m.name ILIKE $%d OR EXISTS (
-					SELECT 1 FROM items it
-					WHERE it.merchant_id::uuid = m.id
-					  AND it.name ILIKE $%d
-				)
-			)`, i, i))
+			`(m.name ILIKE $%d OR EXISTS (
+				SELECT 1 FROM items it
+				WHERE it.merchant_id::uuid = m.id
+				  AND it.name ILIKE $%d
+			))`, i, i))
 		args = append(args, "%"+f.Name+"%")
 		i++
 	}
 
 	where := "WHERE " + strings.Join(conds, " AND ")
 
-	// ====================
-	// STEP 2: Get ALL matching merchants (no sorting in DB)
-	// ====================
 	query := fmt.Sprintf(`
 		SELECT 
-			m.id::text AS id,
-			m.name,
-			m.category,
-			m.image_url,
+			m.id::text, m.name, m.category, m.image_url,
 			ST_Y(m.location::geometry) AS lat,
 			ST_X(m.location::geometry) AS lon,
 			m.created_at
@@ -87,11 +76,12 @@ func (r PurchaseRepository) GetNearbyMerchants(
 
 	rows, err := r.db.Query(ctx, query, args...)
 	if err != nil {
-		return nil, 0, utils.NewInternal(fmt.Sprintf("failed to query merchants: %v", err))
+		return nil, 0, utils.NewInternal("failed to query merchants")
 	}
 	defer rows.Close()
 
-	allMerchants := []entities.Merchant{}
+	// Ambil semua merchant
+	all := []entities.Merchant{}
 	for rows.Next() {
 		var m entities.Merchant
 		if err := rows.Scan(
@@ -100,167 +90,81 @@ func (r PurchaseRepository) GetNearbyMerchants(
 		); err != nil {
 			return nil, 0, utils.NewInternal("failed to scan merchant row")
 		}
-		allMerchants = append(allMerchants, m)
+		all = append(all, m)
 	}
 
-	// ====================
-	// STEP 3: Sort by Haversine distance in application and filter by 3km radius
-	// ====================
-	userPoint := utils.Point{Lat: f.Lat, Lon: f.Long}
+	user := utils.Point{Lat: f.Lat, Lon: f.Long}
 	const maxRadiusKm = 3.0
 
-	type merchantDist struct {
-		merchant entities.Merchant
-		distance float64
+	type mwrap struct {
+		entities.Merchant
+		dist float64
 	}
+	filtered := []mwrap{}
 
-	merchantDistances := []merchantDist{}
-	for _, m := range allMerchants {
-		dist := utils.Haversine(userPoint, utils.Point{Lat: m.Location.Lat, Lon: m.Location.Long})
-		if dist <= maxRadiusKm {
-			merchantDistances = append(merchantDistances, merchantDist{merchant: m, distance: dist})
+	for _, m := range all {
+		d := utils.HaversineKm(user, utils.Point{Lat: m.Location.Lat, Lon: m.Location.Long})
+		if d <= maxRadiusKm {
+			filtered = append(filtered, mwrap{Merchant: m, dist: d})
 		}
 	}
 
-	total := len(merchantDistances)
-	if total == 0 {
+	if len(filtered) == 0 {
 		return []entities.MerchantWithItems{}, 0, nil
 	}
 
-	// Sort by distance ASC, then createdAt DESC
-	const epsilon = 1e-9
-	for i := 0; i < len(merchantDistances)-1; i++ {
-		for j := i + 1; j < len(merchantDistances); j++ {
-			swap := false
-			diff := merchantDistances[j].distance - merchantDistances[i].distance
-			if diff < -epsilon {
-				// j is significantly closer
-				swap = true
-			} else if diff > -epsilon && diff < epsilon {
-				// Same distance (within epsilon), use createdAt DESC as tie-breaker
-				if merchantDistances[j].merchant.CreatedAt.After(merchantDistances[i].merchant.CreatedAt) {
-					swap = true
-				}
-			}
-			if swap {
-				merchantDistances[i], merchantDistances[j] = merchantDistances[j], merchantDistances[i]
-			}
-		}
-	}
+	// 🔥 Urutkan berdasar jarak langsung (bukan TSP)
+	sort.Slice(filtered, func(i, j int) bool {
+		return filtered[i].dist < filtered[j].dist
+	})
 
-	sortedMerchants := make([]entities.Merchant, len(merchantDistances))
-	for i, md := range merchantDistances {
-		sortedMerchants[i] = md.merchant
+	// Ambil 5 terdekat
+	if len(filtered) > 5 {
+		filtered = filtered[:5]
 	}
+	total := len(filtered)
 
-	// Apply pagination
-	start := f.Offset
-	if start > len(sortedMerchants) {
-		start = len(sortedMerchants)
-	}
-	end := start + f.Limit
-	if end > len(sortedMerchants) {
-		end = len(sortedMerchants)
-	}
-
-	pagedMerchants := sortedMerchants[start:end]
-	merchantIDs := make([]string, 0, len(pagedMerchants))
-	merchantMap := make(map[string]*entities.MerchantWithItems, len(pagedMerchants))
-
-	for _, m := range pagedMerchants {
-		merchantIDs = append(merchantIDs, m.ID)
-		merchantMap[m.ID] = &entities.MerchantWithItems{
-			Merchant: m,
+	// Query item per merchant
+	ids := make([]string, 0, total)
+	mmap := make(map[string]*entities.MerchantWithItems, total)
+	for _, mw := range filtered {
+		ids = append(ids, mw.ID)
+		mmap[mw.ID] = &entities.MerchantWithItems{
+			Merchant: mw.Merchant,
 			Items:    []entities.MerchantItem{},
 		}
 	}
 
-	// ====================
-	// STEP 4: Query items
-	// ====================
 	itemRows, err := r.db.Query(ctx, `
 		SELECT id, merchant_id, name, category, price, image_url, created_at
 		FROM items
 		WHERE merchant_id = ANY($1)
 		ORDER BY created_at DESC
-	`, merchantIDs)
+	`, ids)
 	if err != nil {
-		return nil, 0, utils.NewInternal(fmt.Sprintf("failed to query items: %v", err))
+		return nil, 0, utils.NewInternal("failed to query items")
 	}
 	defer itemRows.Close()
 
 	for itemRows.Next() {
 		var it entities.MerchantItem
 		if err := itemRows.Scan(
-			&it.ID, &it.MerchantID, &it.Name, &it.Category, &it.Price, &it.ImageURL, &it.CreatedAt,
+			&it.ID, &it.MerchantID, &it.Name, &it.Category,
+			&it.Price, &it.ImageURL, &it.CreatedAt,
 		); err != nil {
 			return nil, 0, utils.NewInternal("failed to scan item row")
 		}
-		if m, ok := merchantMap[it.MerchantID]; ok {
+		if m, ok := mmap[it.MerchantID]; ok {
 			m.Items = append(m.Items, it)
 		}
 	}
 
-	results := make([]entities.MerchantWithItems, 0, len(merchantIDs))
-	for _, id := range merchantIDs {
-		results = append(results, *merchantMap[id])
+	results := make([]entities.MerchantWithItems, 0, total)
+	for _, mw := range filtered {
+		results = append(results, *mmap[mw.ID])
 	}
 
 	return results, total, nil
-}
-
-func applyNearestNeighborTSP(merchants []entities.Merchant, userLat, userLong float64) []entities.Merchant {
-	if len(merchants) == 0 {
-		return merchants
-	}
-
-	visited := make([]bool, len(merchants))
-	ordered := make([]entities.Merchant, 0, len(merchants))
-
-	userPoint := utils.Point{Lat: userLat, Lon: userLong}
-	currentPoint := userPoint
-
-	// Greedy nearest neighbor from user location
-	for len(ordered) < len(merchants) {
-		nearest := -1
-		minDist := -1.0
-
-		for i, m := range merchants {
-			if visited[i] {
-				continue
-			}
-
-			mPoint := utils.Point{Lat: m.Location.Lat, Lon: m.Location.Long}
-			dist := utils.Haversine(currentPoint, mPoint)
-
-			if nearest == -1 {
-				nearest = i
-				minDist = dist
-			} else if dist < minDist {
-				nearest = i
-				minDist = dist
-			} else if dist == minDist {
-				// Tie-breaker: ID ASC (alphabetically)
-				if m.ID < merchants[nearest].ID {
-					nearest = i
-					minDist = dist
-				}
-			}
-		}
-
-		if nearest == -1 {
-			break
-		}
-
-		visited[nearest] = true
-		ordered = append(ordered, merchants[nearest])
-		currentPoint = utils.Point{
-			Lat: merchants[nearest].Location.Lat,
-			Lon: merchants[nearest].Location.Long,
-		}
-	}
-
-	return ordered
 }
 
 func (r PurchaseRepository) GetAllMerchantByIDs(ctx context.Context, ids []string) ([]entities.Merchant, error) {

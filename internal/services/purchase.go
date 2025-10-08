@@ -78,7 +78,6 @@ func (s PurchaseService) GetNearbyMerchants(ctx context.Context, filter entities
 			Total:  total,
 		},
 	}
-
 	return resp, nil
 }
 

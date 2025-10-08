@@ -7,7 +7,6 @@ import (
 	"belimang/internal/services"
 	"belimang/internal/utils"
 	"encoding/json"
-	"log"
 	"net/http"
 	"strconv"
 
@@ -46,7 +45,7 @@ func (h PurchaseHandler) GetNearbyMerchants(w http.ResponseWriter, r *http.Reque
 	}
 
 	q := r.URL.Query()
-	limit := 5
+	limit := 10
 	offset := 0
 
 	if limStr := q.Get("limit"); limStr != "" {
@@ -80,7 +79,6 @@ func (h PurchaseHandler) GetNearbyMerchants(w http.ResponseWriter, r *http.Reque
 		}
 		return
 	}
-	log.Println(resp)
 
 	utils.SendResponse(w, http.StatusOK, resp)
 }
