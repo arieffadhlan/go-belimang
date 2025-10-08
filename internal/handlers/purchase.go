@@ -45,7 +45,7 @@ func (h PurchaseHandler) GetNearbyMerchants(w http.ResponseWriter, r *http.Reque
 	}
 
 	q := r.URL.Query()
-	limit := 10
+	limit := 5
 	offset := 0
 
 	if limStr := q.Get("limit"); limStr != "" {

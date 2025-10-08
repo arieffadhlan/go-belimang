@@ -6,7 +6,6 @@ import (
 	"belimang/internal/utils"
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -28,6 +27,10 @@ func (r PurchaseRepository) GetNearbyMerchants(
 	if err := ctx.Err(); err != nil {
 		return nil, 0, err
 	}
+	// Require coordinates (endpoint is /merchants/nearby/{lon},{lat})
+	if f.Lat == 0 && f.Long == 0 {
+		return nil, 0, utils.NewBadRequest("latitude and longitude required")
+	}
 
 	// Build dynamic WHERE
 	conds := []string{"TRUE"}
@@ -39,11 +42,13 @@ func (r PurchaseRepository) GetNearbyMerchants(
 		args = append(args, f.MerchantID)
 		i++
 	}
+
 	if f.MerchantCategory != "" {
 		validEnums := map[string]bool{
 			"SmallRestaurant": true, "MediumRestaurant": true, "LargeRestaurant": true,
 			"MerchandiseRestaurant": true, "BoothKiosk": true, "ConvenienceStore": true,
 		}
+		// Spec: if enum invalid, return empty array (200 OK)
 		if !validEnums[f.MerchantCategory] {
 			return []entities.MerchantWithItems{}, 0, nil
 		}
@@ -51,96 +56,99 @@ func (r PurchaseRepository) GetNearbyMerchants(
 		args = append(args, f.MerchantCategory)
 		i++
 	}
+
 	if f.Name != "" {
 		conds = append(conds, fmt.Sprintf(
 			`(m.name ILIKE $%d OR EXISTS (
-				SELECT 1 FROM items it
-				WHERE it.merchant_id::uuid = m.id
-				  AND it.name ILIKE $%d
-			))`, i, i))
-		args = append(args, "%"+f.Name+"%")
+                SELECT 1 FROM items it
+                WHERE it.merchant_id::uuid = m.id
+                  AND it.name ILIKE $%d
+            ))`, i, i))
+		args = append(args, "%"+strings.ToLower(f.Name)+"%")
 		i++
 	}
 
+	// ✅ FIXED: Consistent coordinate order - PostGIS ST_MakePoint(longitude, latitude)
+	conds = append(conds,
+		fmt.Sprintf("ST_DWithin(m.location, ST_MakePoint($%d, $%d)::geography, 3000)", i, i+1))
+	args = append(args, f.Long, f.Lat) // longitude first, then latitude
+	i += 2
+
 	where := "WHERE " + strings.Join(conds, " AND ")
 
+	// Pagination defaults
+	limit := 5
+	if f.Limit > 0 {
+		limit = f.Limit
+	}
+	offset := 0
+	if f.Offset > 0 {
+		offset = f.Offset
+	}
+
+	// ✅ FIXED: Consistent coordinate order in SELECT and ORDER BY
 	query := fmt.Sprintf(`
-		SELECT 
-			m.id::text, m.name, m.category, m.image_url,
-			ST_Y(m.location::geometry) AS lat,
-			ST_X(m.location::geometry) AS lon,
-			m.created_at
-		FROM merchants m
-		%s
-	`, where)
+        SELECT 
+            m.id::text,
+            m.name,
+            m.category,
+            m.image_url,
+            ST_X(m.location::geometry) AS lon,  -- FIXED: longitude first (X)
+            ST_Y(m.location::geometry) AS lat,  -- FIXED: latitude second (Y)
+            m.created_at
+        FROM merchants m
+        %s
+        ORDER BY ST_Distance(m.location, ST_MakePoint($%d, $%d)::geography)
+        LIMIT %d OFFSET %d
+    `, where, len(args)-1, len(args), limit, offset) // Use the last two args for coordinates
 
 	rows, err := r.db.Query(ctx, query, args...)
 	if err != nil {
-		return nil, 0, utils.NewInternal("failed to query merchants")
+		return nil, 0, utils.NewInternal("failed to query nearby merchants")
 	}
 	defer rows.Close()
 
-	// Ambil semua merchant
-	all := []entities.Merchant{}
+	// Parse merchants
+	merchants := []entities.Merchant{}
 	for rows.Next() {
 		var m entities.Merchant
+		// ✅ FIXED: Scan order matches SELECT order
 		if err := rows.Scan(
-			&m.ID, &m.Name, &m.Category, &m.ImageURL,
-			&m.Location.Lat, &m.Location.Long, &m.CreatedAt,
+			&m.ID,
+			&m.Name,
+			&m.Category,
+			&m.ImageURL,
+			&m.Location.Long, // FIXED: Now gets longitude (ST_X)
+			&m.Location.Lat,  // FIXED: Now gets latitude (ST_Y)
+			&m.CreatedAt,
 		); err != nil {
 			return nil, 0, utils.NewInternal("failed to scan merchant row")
 		}
-		all = append(all, m)
+		merchants = append(merchants, m)
 	}
 
-	user := utils.Point{Lat: f.Lat, Lon: f.Long}
-	const maxRadiusKm = 3.0
-
-	type mwrap struct {
-		entities.Merchant
-		dist float64
-	}
-	filtered := []mwrap{}
-
-	for _, m := range all {
-		d := utils.HaversineKm(user, utils.Point{Lat: m.Location.Lat, Lon: m.Location.Long})
-		if d <= maxRadiusKm {
-			filtered = append(filtered, mwrap{Merchant: m, dist: d})
-		}
-	}
-
-	if len(filtered) == 0 {
+	if len(merchants) == 0 {
 		return []entities.MerchantWithItems{}, 0, nil
 	}
 
-	// 🔥 Urutkan berdasar jarak langsung (bukan TSP)
-	sort.Slice(filtered, func(i, j int) bool {
-		return filtered[i].dist < filtered[j].dist
-	})
-
-	// Ambil 5 terdekat
-	if len(filtered) > 5 {
-		filtered = filtered[:5]
-	}
-	total := len(filtered)
-
-	// Query item per merchant
-	ids := make([]string, 0, total)
-	mmap := make(map[string]*entities.MerchantWithItems, total)
-	for _, mw := range filtered {
-		ids = append(ids, mw.ID)
-		mmap[mw.ID] = &entities.MerchantWithItems{
-			Merchant: mw.Merchant,
+	// Fetch items for all these merchants
+	ids := make([]string, 0, len(merchants))
+	mmap := make(map[string]*entities.MerchantWithItems, len(merchants))
+	for _, m := range merchants {
+		ids = append(ids, m.ID)
+		mmap[m.ID] = &entities.MerchantWithItems{
+			Merchant: m,
 			Items:    []entities.MerchantItem{},
 		}
 	}
 
-	itemRows, err := r.db.Query(ctx, `
-		SELECT id, merchant_id, name, category, price, image_url, created_at
-		FROM items
-		WHERE merchant_id = ANY($1)
-		ORDER BY created_at DESC
-	`, ids)
+	itemQuery := `
+        SELECT id::text, merchant_id::text, name, category, price, image_url, created_at
+        FROM items
+        WHERE merchant_id = ANY($1)
+        ORDER BY created_at DESC
+    `
+	itemRows, err := r.db.Query(ctx, itemQuery, ids)
 	if err != nil {
 		return nil, 0, utils.NewInternal("failed to query items")
 	}
@@ -149,8 +157,13 @@ func (r PurchaseRepository) GetNearbyMerchants(
 	for itemRows.Next() {
 		var it entities.MerchantItem
 		if err := itemRows.Scan(
-			&it.ID, &it.MerchantID, &it.Name, &it.Category,
-			&it.Price, &it.ImageURL, &it.CreatedAt,
+			&it.ID,
+			&it.MerchantID,
+			&it.Name,
+			&it.Category,
+			&it.Price,
+			&it.ImageURL,
+			&it.CreatedAt,
 		); err != nil {
 			return nil, 0, utils.NewInternal("failed to scan item row")
 		}
@@ -159,12 +172,13 @@ func (r PurchaseRepository) GetNearbyMerchants(
 		}
 	}
 
-	results := make([]entities.MerchantWithItems, 0, total)
-	for _, mw := range filtered {
-		results = append(results, *mmap[mw.ID])
+	// Preserve distance order
+	results := make([]entities.MerchantWithItems, 0, len(merchants))
+	for _, m := range merchants {
+		results = append(results, *mmap[m.ID])
 	}
 
-	return results, total, nil
+	return results, len(results), nil
 }
 
 func (r PurchaseRepository) GetAllMerchantByIDs(ctx context.Context, ids []string) ([]entities.Merchant, error) {
