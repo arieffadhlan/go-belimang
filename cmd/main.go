@@ -46,23 +46,24 @@ func main() {
 	r := chi.NewRouter()
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Logger)
+	r.Use(middleware.Recoverer)
 
 	repository.SetPool(dbp)
 
 	authRepository := repository.NewAuthRepository(dbp)
 	merchantRepository := repository.NewMerchantRepository(dbp)
-	// purchaseRepository := repository.NewPurchaseRepository(dbp)
+	purchaseRepository := repository.NewPurchaseRepository(dbp)
 
 	hashingPool := services.NewHashingPool(2, 40)
 	authService := services.NewAuthService(authRepository, hashingPool)
 	fileService := services.NewFileService(minioClient, cfg)
 	merchantService := services.NewMerchantService(merchantRepository)
-	// purchaseService := services.NewPurchaseService(purchaseRepository)
+	purchaseService := services.NewPurchaseService(purchaseRepository)
 
 	fileHandler := handlers.NewFileHandler(fileService)
 	authHandler := handlers.NewAuthHandler(authService, v)
 	merchantHandler := handlers.NewMerchantHandler(merchantService, v)
-	// purchaseHandler := handlers.NewPurchaseHandler(purchaseService, v)
+	purchaseHandler := handlers.NewPurchaseHandler(purchaseService, v)
 
 	r.Get("/health-check", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -72,6 +73,7 @@ func main() {
 	route.RegisterAuthRoutes(r, authHandler)
 	route.RegisterFileRoutes(r, fileHandler)
 	route.RegisterMerchantRoutes(r, merchantHandler)
+	route.RegisterPurchaseRoutes(r, purchaseHandler)
 
 	server := http.Server{
 		Addr:        cfg.Host + ":" + cfg.Port,

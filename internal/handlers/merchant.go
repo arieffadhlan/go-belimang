@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-playground/validator/v10"
+	"github.com/google/uuid"
 )
 
 type MerchantHandler struct {
@@ -41,6 +42,7 @@ func (h MerchantHandler) CreateMerchant(w http.ResponseWriter, r *http.Request) 
 	}
 
 	merchant := entities.Merchant{
+		ID:       uuid.New().String(),
 		Name:     req.Name,
 		ImageURL: req.ImageURL,
 		Category: req.MerchantCategory,
@@ -122,11 +124,12 @@ func (h MerchantHandler) CreateMercItem(w http.ResponseWriter, r *http.Request) 
 	merchantId := chi.URLParam(r, "merchantId")
 
 	item := entities.MerchantItem{
-		Name:       req.Name,
+		ID:       	uuid.New().String(),
 		MerchantID: merchantId,
-		Price:      req.Price,
+		Name:       req.Name,
 		Category:   req.ProductCategory,
 		ImageURL:   req.ImageURL,
+		Price:      req.Price,
 	}
 
 	merchantItemId, err := h.service.CreateMercItem(ctx, item)

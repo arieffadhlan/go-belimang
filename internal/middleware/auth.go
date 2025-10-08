@@ -11,8 +11,7 @@ import (
 )
 
 type AuthContext struct {
-	ID      string
-	IsAdmin bool
+	ID string
 }
 
 func Protected(requireAdmin bool) func(http.Handler) http.Handler {
@@ -56,7 +55,7 @@ func Protected(requireAdmin bool) func(http.Handler) http.Handler {
 				return
 			}
 
-			authCtx := AuthContext{ID: id, IsAdmin: isAdmin}
+			authCtx := AuthContext{ID: id}
 			ctx := context.WithValue(r.Context(), AuthContext{}, authCtx)
 
 			next.ServeHTTP(w, r.WithContext(ctx))

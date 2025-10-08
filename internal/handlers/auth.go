@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"github.com/go-playground/validator/v10"
+	"github.com/google/uuid"
 )
 
 type AuthHandler struct {
@@ -38,7 +39,8 @@ func (h AuthHandler) SignUp(w http.ResponseWriter, r *http.Request, role string)
 	}
 
 	usr := entities.User{
-		Email: 	req.Email,
+		Id:       uuid.New().String(),
+		Email:    req.Email,
 		IsAdmin:  role == "admin",
 		Username: req.Username,
 		Password: req.Password,

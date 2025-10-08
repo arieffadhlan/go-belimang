@@ -27,20 +27,22 @@ func (r MerchantRepository) CreateMerchant(ctx context.Context, tx pgx.Tx, req e
 
 	query := `
 		INSERT INTO merchants (
+			id,
 			name, 
 			image_url, 
 			category, 
 			location
 		)
 		VALUES (
-			$1, $2, $3, 
-			ST_SetSRID(ST_MakePoint($4, $5), 4326)::GEOGRAPHY
+			$1, $2, $3, $4,
+			ST_SetSRID(ST_MakePoint($5, $6), 4326)::GEOGRAPHY
 		)
 		RETURNING id
 	`
 
 	res := entities.Merchant{}
 	err := tx.QueryRow(ctx, query,
+		req.ID,
 		req.Name,
 		req.ImageURL,
 		req.Category,
@@ -48,7 +50,7 @@ func (r MerchantRepository) CreateMerchant(ctx context.Context, tx pgx.Tx, req e
 	).Scan(&res.ID)
 
 	if err != nil {
-		 return entities.Merchant{}, utils.NewInternal("failed create merchant")
+		 return entities.Merchant{}, err
 	}
 
 	return res, nil
@@ -172,13 +174,13 @@ func (r MerchantRepository) CreateMercItem(ctx context.Context, tx pgx.Tx, req e
 	}
 
 	query := `
-		INSERT INTO items (merchant_id, name, price, image_url, category)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO items (id, merchant_id, name, price, image_url, category)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING id
 	`
 
 	res := entities.MerchantItem{}
-	err := tx.QueryRow(ctx, query, req.MerchantID, req.Name, req.Price, req.ImageURL, req.Category).Scan(&res.ID)
+	err := tx.QueryRow(ctx, query, req.ID, req.MerchantID, req.Name, req.Price, req.ImageURL, req.Category).Scan(&res.ID)
 
 	if err != nil {
 		 return entities.MerchantItem{}, utils.NewInternal("failed create merchant item")
