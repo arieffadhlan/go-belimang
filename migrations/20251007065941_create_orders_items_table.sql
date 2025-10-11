@@ -2,9 +2,9 @@
 -- +goose StatementBegin
 CREATE TABLE IF NOT EXISTS orders_items (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    estimate_id TEXT NOT NULL,
-    merchant_id TEXT NOT NULL,
-    merchant_item_id TEXT NOT NULL,
+    estimate_id UUID NOT NULL,
+    merchant_id UUID NOT NULL,
+    merchant_item_id UUID NOT NULL,
     quantity INT NOT NULL
 );
 

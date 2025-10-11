@@ -25,7 +25,6 @@ func (r AuthRepository) CreateUser(ctx context.Context, tx pgx.Tx, req entities.
 
 	query := `
 		INSERT INTO users (
-			id,
 			email,
 			username, 
 			password, 
@@ -35,8 +34,7 @@ func (r AuthRepository) CreateUser(ctx context.Context, tx pgx.Tx, req entities.
 			$1, 
 			$2, 
 			$3, 
-			$4, 
-			$5 
+			$4 
 		)
 		RETURNING id, is_admin
 	`
@@ -45,7 +43,6 @@ func (r AuthRepository) CreateUser(ctx context.Context, tx pgx.Tx, req entities.
 	err := tx.QueryRow(
 		ctx,
 		query,
-		req.Id,
 		req.Email,
 		req.Username,
 		req.Password,

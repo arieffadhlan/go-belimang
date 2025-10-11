@@ -2,7 +2,7 @@
 -- +goose StatementBegin
 CREATE TABLE IF NOT EXISTS orders (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    estimate_id TEXT NOT NULL
+    estimate_id UUID NOT NULL
 );
 -- +goose StatementEnd
 

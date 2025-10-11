@@ -4,8 +4,8 @@ import "time"
 
 type (
 	Location struct {
-		Lat  float64 `json:"lat" validate:"required,min=-90,max=90"`
-		Long float64 `json:"long" validate:"required,min=-180,max=180"`
+		Lat float64 `json:"lat"  validate:"required,min=-90,max=90"`
+		Lon float64 `json:"long" validate:"required,min=-180,max=180"`
 	}
 
 	Meta struct {
@@ -18,7 +18,7 @@ type (
 		ID        string    `json:"merchantId" db:"id"`
 		Name      string    `json:"name" db:"name"`
 		Category  string    `json:"merchantCategory" db:"category"`
-		ImageURL  string    `json:"imageUrl" db:"image_url"`
+		ImageURL  string    `json:"imageUrl" db:"imageurl"`
 		Location  Location  `json:"location"`
 		CreatedAt time.Time `json:"createdAt" db:"created_at"`
 	}
@@ -27,7 +27,7 @@ type (
 		ID       string    `json:"itemId" db:"id"`
 		Name     string    `json:"name" db:"name"`
 		Category string    `json:"productCategory" db:"category"`
-		ImageURL string    `json:"imageUrl" db:"image_url"`
+		ImageURL string    `json:"imageUrl" db:"imageurl"`
 		Price    int       `json:"price" db:"price"`
 		CreateAt time.Time `json:"createdAt" db:"created_at"`
 	}

@@ -4,25 +4,25 @@ import "time"
 
 type (
 	Location struct {
-		Lat  float64
-		Long float64
+		Lat float64
+		Lon float64
 	}
 
 	Merchant struct {
 		ID        string `db:"id"`
 		Name      string `db:"name"`
 		Category  string `db:"category"`
-		ImageURL  string `db:"image_url"`
+		ImageURL  string `db:"imageurl"`
 		Location  Location
 		CreatedAt time.Time `db:"created_at"`
 	}
 
-	MerchantItem struct {
+	MercItem struct {
 		ID         string    `db:"id"`
 		Name       string    `db:"name"`
 		MerchantID string    `db:"merchant_id"`
 		Category   string    `db:"category"`
-		ImageURL   string    `db:"image_url"`
+		ImageURL   string    `db:"imageurl"`
 		Price      int       `db:"price"`
 		CreatedAt  time.Time `db:"created_at"`
 	}
@@ -36,7 +36,7 @@ type (
 		Offset           int
 	}
 
-	MerchantItemFilter struct {
+	MercItemFilter struct {
 		Limit           int
 		CreatedAt       string
 		Name            string

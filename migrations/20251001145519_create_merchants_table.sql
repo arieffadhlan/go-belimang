@@ -14,7 +14,7 @@ CREATE TYPE merchant_categories_enum AS ENUM (
 CREATE TABLE IF NOT EXISTS merchants (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name TEXT NOT NULL,
-    image_url TEXT NOT NULL,
+    imageurl TEXT NOT NULL,
     category merchant_categories_enum NOT NULL,
     location GEOGRAPHY('POINT', 4326) NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP

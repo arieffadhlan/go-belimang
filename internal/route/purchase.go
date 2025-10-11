@@ -12,7 +12,7 @@ func RegisterPurchaseRoutes(r chi.Router, h handlers.PurchaseHandler) {
 		g.Use(middleware.Protected(false))
 
 		g.Get("/users/orders", h.GetAllOrder)
-		g.Get("/merchants/nearby/{lat},{long}", h.GetNearbyMerchants)
+		g.Get("/merchants/nearby/{lat},{lon}", h.GetNearbyMerchants)
 
 		g.Post("/users/orders", h.CreateOrder)
 		g.Post("/users/estimate", h.CreateEstimate)

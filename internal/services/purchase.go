@@ -26,18 +26,10 @@ const (
 	maxRadiusKm = 3.0
 )
 
-func (s PurchaseService) GetNearbyMerchants(ctx context.Context, filter entities.MerchantNearbyFilter) (map[string]any, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-
-	if filter.Lat == 0 && filter.Long == 0 {
-		return nil, utils.NewBadRequest("invalid lat/long")
-	}
-
-	merchants, total, err := s.repository.GetNearbyMerchants(ctx, filter)
+func (s PurchaseService) GetNearbyMerchants(ctx context.Context, f entities.MerchantNearbyFilter) (map[string]any, error) {
+	merchants, total, err := s.repository.GetNearbyMerchants(ctx, f)
 	if err != nil {
-		return nil, err
+		 return nil, err
 	}
 
 	data := make([]map[string]any, 0, len(merchants))
@@ -56,13 +48,13 @@ func (s PurchaseService) GetNearbyMerchants(ctx context.Context, filter entities
 
 		data = append(data, map[string]any{
 			"merchant": map[string]any{
-				"merchantId":       m.ID,
 				"name":             m.Name,
+				"merchantId":       m.ID,
 				"merchantCategory": m.Category,
 				"imageUrl":         m.ImageURL,
 				"location": map[string]float64{
 					"lat":  m.Location.Lat,
-					"long": m.Location.Long,
+					"long": m.Location.Lon,
 				},
 				"createdAt": m.CreatedAt.Format(time.RFC3339Nano),
 			},
@@ -70,20 +62,15 @@ func (s PurchaseService) GetNearbyMerchants(ctx context.Context, filter entities
 		})
 	}
 
-	resp := map[string]any{
+	return map[string]any{
 		"data": data,
-		"meta": dto.Meta{
-			Limit:  filter.Limit,
-			Offset: filter.Offset,
-			Total:  total,
-		},
-	}
-	return resp, nil
+		"meta": dto.Meta{Limit: f.Limit, Offset: f.Offset, Total: total},
+	}, nil
 }
 
-func (s PurchaseService) CreateEstimate(ctx context.Context, req dto.EstimateRequest) (dto.EstimateResponse, error) {
+func (s PurchaseService) CreateEstimate(ctx context.Context, req dto.EstimateReq) (dto.EstimateRes, error) {
 	if err := ctx.Err(); err != nil {
-		return dto.EstimateResponse{}, err
+		 return dto.EstimateRes{},err
 	}
 
 	startId := -1
@@ -93,20 +80,20 @@ func (s PurchaseService) CreateEstimate(ctx context.Context, req dto.EstimateReq
 	for i, order := range req.UserPurchase {
 		if order.IsStartingPoint {
 			if startId >= 0 {
-				return dto.EstimateResponse{}, utils.NewBadRequest("must have exactly one starting point")
+				 return dto.EstimateRes{}, utils.NewBadRequest("must have exactly one starting point")
 			}
 			startId = i
 		}
 
 		if _, err := uuid.Parse(order.MerchantID); err != nil {
-			return dto.EstimateResponse{}, utils.NewNotFound("merchant not found")
+				return dto.EstimateRes{}, utils.NewNotFound("merchant not found")
 		} else {
-			mercIDs = append(mercIDs, order.MerchantID)
+				mercIDs = append(mercIDs, order.MerchantID)
 		}
 
 		for _, item := range order.OrderItems {
 			if _, err := uuid.Parse(item.ItemID); err != nil {
-				return dto.EstimateResponse{}, utils.NewNotFound("mercItem not found")
+				return dto.EstimateRes{}, utils.NewNotFound("mercItem not found")
 			} else {
 				itemIDs = append(itemIDs, item.ItemID)
 			}
@@ -114,69 +101,69 @@ func (s PurchaseService) CreateEstimate(ctx context.Context, req dto.EstimateReq
 	}
 
 	if startId == -1 {
-		return dto.EstimateResponse{}, utils.NewBadRequest("must have exactly one starting point")
+		 return dto.EstimateRes{}, utils.NewBadRequest("must have exactly one starting point")
 	}
 
-	merchants, err := s.repository.GetAllMerchantByIDs(ctx, mercIDs)
+	merchants,err := s.repository.GetAllMerchantByIDs(ctx, mercIDs)
 	if err != nil {
-		return dto.EstimateResponse{}, utils.NewInternal("failed to get merchants")
+		 return dto.EstimateRes{}, utils.NewInternal("failed to get merchants")
 	}
 	if len(merchants) == 0 {
-		return dto.EstimateResponse{}, utils.NewNotFound("merchant data not found")
+		 return dto.EstimateRes{}, utils.NewNotFound("merchant data not found")
 	}
 
-	mercItems, err := s.repository.GetAllMercItemByIDs(ctx, itemIDs)
+	mercItems,err := s.repository.GetAllMercItemByIDs(ctx, itemIDs)
 	if err != nil {
-		return dto.EstimateResponse{}, utils.NewInternal("failed to get mercItems")
+		 return dto.EstimateRes{}, utils.NewInternal("failed to get mercItems")
 	}
 	if len(mercItems) == 0 {
-		return dto.EstimateResponse{}, utils.NewNotFound("mercItem data not found")
+		 return dto.EstimateRes{}, utils.NewNotFound("mercItem data not found")
 	}
 
-	mercItemByID := make(map[string]entities.MerchantItem, len(mercItems))
-	merchantByID := make(map[string]entities.Merchant, len(merchants))
+	merchantMap := make(map[string]entities.Merchant, len(merchants))
+	mercItemMap := make(map[string]entities.MercItem, len(mercItems))
 	for _, merchant := range merchants {
-		merchantByID[merchant.ID] = merchant
+		merchantMap[merchant.ID] = merchant
 	}
 	for _, mercItem := range mercItems {
-		mercItemByID[mercItem.ID] = mercItem
+		mercItemMap[mercItem.ID] = mercItem
 	}
 
-	points := make([]utils.Point, 0, len(req.UserPurchase)+1)
-	for _, o := range req.UserPurchase {
-		m := merchantByID[o.MerchantID]
-		points = append(points, utils.Point{
-			Lat: m.Location.Lat, Lon: m.Location.Long,
+	merchantPoints := make([]utils.Point, 0, len(req.UserPurchase)+1)
+	for _, ord := range req.UserPurchase {
+		merchant := merchantMap[ord.MerchantID]
+		merchantPoints = append(merchantPoints, utils.Point{
+			Lat: merchant.Location.Lat, 
+			Lon: merchant.Location.Lon,
 		})
 	}
 
-	points = append(points, utils.Point{
-		Lat: req.UserLocation.Lat, Lon: req.UserLocation.Long,
+	merchantPoints = append(merchantPoints, utils.Point{
+		Lat: req.UserLocation.Lat, 
+		Lon: req.UserLocation.Lon,
 	})
 
-	maxDis := 0.0
-	userPoint := points[len(points)-1]
-	for _, point := range points[:len(points)-1] {
-		d := utils.Haversine(userPoint, point)
-		if d > maxDis {
-			maxDis = d
-		}
+	maxDistance := 0.0
+	usrLocPoint := merchantPoints[len(merchantPoints)-1]
+	for _, p := range merchantPoints[:len(merchantPoints)-1] {
+			if d := utils.Haversine(usrLocPoint, p); d > maxDistance {
+				maxDistance = d
+			}
 	}
 
-	if maxDis > maxRadiusKm {
-		return dto.EstimateResponse{}, utils.NewBadRequest("distance too far")
+	if maxDistance > maxRadiusKm {
+		return dto.EstimateRes{}, utils.NewBadRequest("distance too far")
 	}
 
-	totalDist := utils.NearestNeighborTSP(startId, points)
+	totalDistance := utils.NearestNeighborTSP(startId, merchantPoints)
 
 	totalPrice := 0
 	orderItems := make([]entities.OrderItem, 0, len(itemIDs))
 	for _, order := range req.UserPurchase {
 		for _, orderItem := range order.OrderItems {
-			item := mercItemByID[orderItem.ItemID]
+			item := mercItemMap[orderItem.ItemID]
 			totalPrice += orderItem.ItemQuantity * item.Price
 			orderItems = append(orderItems, entities.OrderItem{
-				ID:             uuid.New().String(),
 				MerchantID:     order.MerchantID,
 				MerchantItemID: orderItem.ItemID,
 				Quantity:       orderItem.ItemQuantity,
@@ -184,58 +171,55 @@ func (s PurchaseService) CreateEstimate(ctx context.Context, req dto.EstimateReq
 		}
 	}
 
-	tx, err := repository.BeginTx(ctx)
+	tx,err := repository.BeginTx(ctx)
 	if err != nil {
-		return dto.EstimateResponse{}, err
+		 return dto.EstimateRes{}, err
 	}
 	defer tx.Rollback(ctx)
 
-	est := entities.Estimate{
-		ID:     uuid.New().String(),
-		UserID: req.UserID,
-	}
-	if err := s.repository.CreateEstimateBatch(ctx, tx, est, orderItems); err != nil {
-		return dto.EstimateResponse{}, err
+	estimateRq := entities.Estimate{UserID: req.UserID}
+	estimateID, err := s.repository.CreateEstimateBatch(ctx, tx, estimateRq, orderItems)
+	if err != nil {
+		 return dto.EstimateRes{}, err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return dto.EstimateResponse{}, err
+		 return dto.EstimateRes{}, err
 	}
 
-	return dto.EstimateResponse{
+	return dto.EstimateRes{
 		TotalPrice:                   totalPrice,
-		CalculatedEstimateId:         est.ID,
-		EstimatedDeliveryTimeMinutes: int(totalDist * kmToMinute),
+		CalculatedEstimateId:         estimateID,
+		EstimatedDeliveryTimeMinutes: int(totalDistance * kmToMinute),
 	}, nil
 }
 
 func (s PurchaseService) CreateOrder(ctx context.Context, req dto.CreateOrderRequest) (dto.CreateOrderResponse, error) {
 	if err := ctx.Err(); err != nil {
-		return dto.CreateOrderResponse{}, err
+		 return dto.CreateOrderResponse{}, err
 	}
 
 	_, err := s.repository.GetEstimateDataByID(ctx, req.EstimateID)
 	if err != nil {
-		return dto.CreateOrderResponse{}, utils.NewNotFound("estimate does not exist")
+		 return dto.CreateOrderResponse{}, utils.NewNotFound("estimate does not exist")
 	}
 
 	order := entities.Order{
-		ID:         uuid.New().String(),
 		EstimateID: req.EstimateID,
 	}
 
-	tx, err := repository.BeginTx(ctx)
+	tx,err := repository.BeginTx(ctx)
 	if err != nil {
-		return dto.CreateOrderResponse{}, err
+		 return dto.CreateOrderResponse{}, err
 	}
 	defer tx.Rollback(ctx)
 
-	if err := s.repository.CreateOrderFromEsID(ctx, order); err != nil {
-		return dto.CreateOrderResponse{}, err
+	if err := s.repository.CreateOrderFromEsID(ctx, tx, order); err != nil {
+		 return dto.CreateOrderResponse{}, err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return dto.CreateOrderResponse{}, err
+		 return dto.CreateOrderResponse{}, err
 	}
 
 	return dto.CreateOrderResponse{

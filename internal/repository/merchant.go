@@ -20,63 +20,6 @@ func NewMerchantRepository(db *pgxpool.Pool) MerchantRepository {
 	return MerchantRepository{db: db}
 }
 
-func (r MerchantRepository) CreateMerchant(ctx context.Context, tx pgx.Tx, req entities.Merchant) (entities.Merchant, error) {
-	if err := ctx.Err(); err != nil {
-		 return entities.Merchant{}, err
-	}
-
-	query := `
-		INSERT INTO merchants (
-			id,
-			name, 
-			image_url, 
-			category, 
-			location
-		)
-		VALUES (
-			$1, $2, $3, $4,
-			ST_SetSRID(ST_MakePoint($5, $6), 4326)::GEOGRAPHY
-		)
-		RETURNING id
-	`
-
-	res := entities.Merchant{}
-	err := tx.QueryRow(ctx, query,
-		req.ID,
-		req.Name,
-		req.ImageURL,
-		req.Category,
-		req.Location.Long, req.Location.Lat,
-	).Scan(&res.ID)
-
-	if err != nil {
-		 return entities.Merchant{}, err
-	}
-
-	return res, nil
-}
-
-func (r MerchantRepository) GetMerchantById(ctx context.Context, merchantId string) (entities.Merchant, error) {
-	if err := ctx.Err(); err != nil {
-		 return entities.Merchant{}, err
-	}
-
-	query := `SELECT id FROM merchants WHERE id = $1`
-
-	var m entities.Merchant
-	err := r.db.QueryRow(ctx, query, merchantId).Scan(&m.ID)
-
-	if err != nil {
-		if err == pgx.ErrNoRows {
-			return entities.Merchant{}, utils.NewNotFound("merchants not found")
-		} else {
-			return entities.Merchant{}, utils.NewInternal("failed get merchant")
-		}
-	}
-
-	return m, nil
-}
-
 func (r MerchantRepository) GetAllMerchant(ctx context.Context, filter entities.MerchantFilter) (dto.MerchantResponse, error) {
 	if err := ctx.Err(); err != nil {
 		 return dto.MerchantResponse{}, err
@@ -120,7 +63,7 @@ func (r MerchantRepository) GetAllMerchant(ctx context.Context, filter entities.
 
 	query := fmt.Sprintf(`
 		SELECT 
-			id, name, image_url, category,
+			id, name, imageurl, category,
 			ST_X(location::geometry) as lon,
 			ST_Y(location::geometry) as lat,
 			created_at, Count(*) OVER() AS total
@@ -146,7 +89,8 @@ func (r MerchantRepository) GetAllMerchant(ctx context.Context, filter entities.
 			&cur.Name,
 			&cur.ImageURL,
 			&cur.Category,
-			&cur.Location.Long, &cur.Location.Lat,
+			&cur.Location.Lon, 
+			&cur.Location.Lat,
 			&cur.CreatedAt,
 			&total,
 		)
@@ -168,28 +112,7 @@ func (r MerchantRepository) GetAllMerchant(ctx context.Context, filter entities.
 	}, nil
 }
 
-func (r MerchantRepository) CreateMercItem(ctx context.Context, tx pgx.Tx, req entities.MerchantItem) (entities.MerchantItem, error) {
-	if err := ctx.Err(); err != nil {
-		 return entities.MerchantItem{}, err
-	}
-
-	query := `
-		INSERT INTO items (id, merchant_id, name, price, image_url, category)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		RETURNING id
-	`
-
-	res := entities.MerchantItem{}
-	err := tx.QueryRow(ctx, query, req.ID, req.MerchantID, req.Name, req.Price, req.ImageURL, req.Category).Scan(&res.ID)
-
-	if err != nil {
-		 return entities.MerchantItem{}, utils.NewInternal("failed create merchant item")
-	}
-
-	return res, nil
-}
-
-func (r MerchantRepository) GetAllMercItem(ctx context.Context, merchantId string, filter entities.MerchantItemFilter) (dto.MercItemResponse, error) {
+func (r MerchantRepository) GetAllMercItem(ctx context.Context, merchantId string, filter entities.MercItemFilter) (dto.MercItemResponse, error) {
 	if err := ctx.Err(); err != nil {
 		 return dto.MercItemResponse{}, err
 	}
@@ -232,7 +155,7 @@ func (r MerchantRepository) GetAllMercItem(ctx context.Context, merchantId strin
 	
 	query := fmt.Sprintf(`
 		SELECT 
-			id, name, price, image_url, category, created_at, 
+			id, name, price, imageurl, category, created_at, 
 			COUNT(*) OVER() AS total
 		FROM items 
 		WHERE %s
@@ -276,4 +199,81 @@ func (r MerchantRepository) GetAllMercItem(ctx context.Context, merchantId strin
 		Data: items,
 		Meta: dto.Meta{Total: total, Limit: limit, Offset: offset},
 	}, nil
+}
+
+func (r MerchantRepository) GetMerchantById(ctx context.Context, merchantId string) (entities.Merchant, error) {
+	if err := ctx.Err(); err != nil {
+		 return entities.Merchant{}, err
+	}
+
+	query := `SELECT id FROM merchants WHERE id = $1`
+
+	var m entities.Merchant
+	err := r.db.QueryRow(ctx, query, merchantId).Scan(&m.ID)
+
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return entities.Merchant{}, utils.NewNotFound("merchants not found")
+		} else {
+			return entities.Merchant{}, utils.NewInternal("failed get merchant")
+		}
+	}
+
+	return m, nil
+}
+
+func (r MerchantRepository) CreateMerchant(ctx context.Context, tx pgx.Tx, req entities.Merchant) (entities.Merchant, error) {
+	if err := ctx.Err(); err != nil {
+		 return entities.Merchant{}, err
+	}
+
+	query := `
+		INSERT INTO merchants (
+			name, 
+			imageurl, 
+			category, 
+			location
+		)
+		VALUES (
+			$1, $2, $3,
+			ST_SetSRID(ST_MakePoint($4, $5), 4326)::GEOGRAPHY
+		)
+		RETURNING id
+	`
+
+	res := entities.Merchant{}
+	err := tx.QueryRow(ctx, query,
+		req.Name,
+		req.ImageURL,
+		req.Category,
+		req.Location.Lon, 
+		req.Location.Lat,
+	).Scan(&res.ID)
+
+	if err != nil {
+		 return entities.Merchant{}, err
+	}
+
+	return res, nil
+}
+
+func (r MerchantRepository) CreateMercItem(ctx context.Context, tx pgx.Tx, req entities.MercItem) (entities.MercItem, error) {
+	if err := ctx.Err(); err != nil {
+		 return entities.MercItem{}, err
+	}
+
+	query := `
+		INSERT INTO items (merchant_id, name, price, imageurl, category)
+		VALUES ($1, $2, $3, $4, $5)
+		RETURNING id
+	`
+
+	res := entities.MercItem{}
+	err := tx.QueryRow(ctx, query, req.MerchantID, req.Name, req.Price, req.ImageURL, req.Category).Scan(&res.ID)
+
+	if err != nil {
+		 return entities.MercItem{}, utils.NewInternal("failed create merchant item")
+	}
+
+	return res, nil
 }

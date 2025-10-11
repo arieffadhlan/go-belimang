@@ -20,228 +20,267 @@ func NewPurchaseRepository(db *pgxpool.Pool) PurchaseRepository {
 	return PurchaseRepository{db: db}
 }
 
-func (r PurchaseRepository) GetNearbyMerchants(
-	ctx context.Context,
-	f entities.MerchantNearbyFilter,
-) ([]entities.MerchantWithItems, int, error) {
+func (r PurchaseRepository) GetNearbyMerchants(ctx context.Context, f entities.MerchantNearbyFilter) ([]entities.MerchantWithItems, int, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, 0, err
-	}
-	// Require coordinates (endpoint is /merchants/nearby/{lon},{lat})
-	if f.Lat == 0 && f.Long == 0 {
-		return nil, 0, utils.NewBadRequest("latitude and longitude required")
+		 return nil, 0, err
 	}
 
-	// Build dynamic WHERE
-	conds := []string{"TRUE"}
+	validEnums := map[string]bool{
+		"SmallRestaurant": true, 
+		"LargeRestaurant": true,
+		"BoothKiosk": true, 
+		"MediumRestaurant": true, 
+		"ConvenienceStore": true,
+		"MerchandiseRestaurant": true, 
+	}
+
+	if f.MerchantCategory != "" && !validEnums[f.MerchantCategory] {
+		return []entities.MerchantWithItems{}, 0, nil
+	}
+
+	conds := []string{}
 	args := []any{}
 	i := 1
 
+	// user location point
+	args = append(args, f.Lon, f.Lat)
+	lonIdx := i
+	latIdx := i + 1
+	i += 2
+
+	// radius 3km filter
+	conds = append(conds, fmt.Sprintf(
+		"ST_DWithin(m.location, ST_SetSRID(ST_MakePoint($%d, $%d), 4326)::geography, 3000)",
+		lonIdx, latIdx,
+	))
+
 	if f.MerchantID != "" {
-		conds = append(conds, fmt.Sprintf("m.id::text = $%d", i))
+		conds = append(conds, fmt.Sprintf("m.id = $%d::uuid", i))
 		args = append(args, f.MerchantID)
 		i++
 	}
 
+	if f.Name != "" {
+		conds = append(conds, fmt.Sprintf(`(
+			m.name ILIKE $%d OR 
+			EXISTS (
+				SELECT 1 FROM items it 
+				WHERE it.merchant_id = m.id 
+				AND it.name ILIKE $%d
+			)
+		)`, i, i))
+		args = append(args, "%"+f.Name+"%")
+		i++
+	}
+
 	if f.MerchantCategory != "" {
-		validEnums := map[string]bool{
-			"SmallRestaurant": true, "MediumRestaurant": true, "LargeRestaurant": true,
-			"MerchandiseRestaurant": true, "BoothKiosk": true, "ConvenienceStore": true,
-		}
-		// Spec: if enum invalid, return empty array (200 OK)
-		if !validEnums[f.MerchantCategory] {
-			return []entities.MerchantWithItems{}, 0, nil
-		}
 		conds = append(conds, fmt.Sprintf("m.category = $%d", i))
 		args = append(args, f.MerchantCategory)
 		i++
 	}
 
-	if f.Name != "" {
-		conds = append(conds, fmt.Sprintf(
-			`(m.name ILIKE $%d OR EXISTS (
-                SELECT 1 FROM items it
-                WHERE it.merchant_id::uuid = m.id
-                  AND it.name ILIKE $%d
-            ))`, i, i))
-		args = append(args, "%"+strings.ToLower(f.Name)+"%")
-		i++
+	where := ""
+	if len(conds) > 0 {
+		where = "WHERE " + strings.Join(conds, " AND ")
 	}
 
-	// ✅ FIXED: Consistent coordinate order - PostGIS ST_MakePoint(longitude, latitude)
-	conds = append(conds,
-		fmt.Sprintf("ST_DWithin(m.location, ST_MakePoint($%d, $%d)::geography, 3000)", i, i+1))
-	args = append(args, f.Long, f.Lat) // longitude first, then latitude
-	i += 2
-
-	where := "WHERE " + strings.Join(conds, " AND ")
-
-	// Pagination defaults
-	limit := 5
-	if f.Limit > 0 {
-		limit = f.Limit
-	}
-	offset := 0
-	if f.Offset > 0 {
-		offset = f.Offset
+	limit := f.Limit
+	if limit <= 0 {
+		 limit = 5
 	}
 
-	// ✅ FIXED: Consistent coordinate order in SELECT and ORDER BY
-	query := fmt.Sprintf(`
-        SELECT 
-            m.id::text,
-            m.name,
-            m.category,
-            m.image_url,
-            ST_X(m.location::geometry) AS lon,  -- FIXED: longitude first (X)
-            ST_Y(m.location::geometry) AS lat,  -- FIXED: latitude second (Y)
-            m.created_at
-        FROM merchants m
-        %s
-        ORDER BY ST_Distance(m.location, ST_MakePoint($%d, $%d)::geography)
-        LIMIT %d OFFSET %d
-    `, where, len(args)-1, len(args), limit, offset) // Use the last two args for coordinates
+	offset := f.Offset
+	if offset < 0 {
+		 offset = 0
+	}
 
-	rows, err := r.db.Query(ctx, query, args...)
+	// count total merchants
+	queryCount := fmt.Sprintf(`
+		SELECT COUNT(*)
+		FROM merchants m
+		%s
+	`, where)
+
+	var total int
+	err := r.db.QueryRow(ctx, queryCount, args...).Scan(&total)
 	if err != nil {
-		return nil, 0, utils.NewInternal("failed to query nearby merchants")
-	}
-	defer rows.Close()
-
-	// Parse merchants
-	merchants := []entities.Merchant{}
-	for rows.Next() {
-		var m entities.Merchant
-		// ✅ FIXED: Scan order matches SELECT order
-		if err := rows.Scan(
-			&m.ID,
-			&m.Name,
-			&m.Category,
-			&m.ImageURL,
-			&m.Location.Long, // FIXED: Now gets longitude (ST_X)
-			&m.Location.Lat,  // FIXED: Now gets latitude (ST_Y)
-			&m.CreatedAt,
-		); err != nil {
-			return nil, 0, utils.NewInternal("failed to scan merchant row")
-		}
-		merchants = append(merchants, m)
+		return nil, 0, fmt.Errorf("count merchants failed: %w", err)
 	}
 
-	if len(merchants) == 0 {
+	if total == 0 {
 		return []entities.MerchantWithItems{}, 0, nil
 	}
 
-	// Fetch items for all these merchants
+	queryMerchants := fmt.Sprintf(`
+		SELECT
+			m.id::text,
+			m.name,
+			m.category,
+			m.imageurl,
+			ST_Y(m.location::geometry) AS lat,
+			ST_X(m.location::geometry) AS lon,
+			m.created_at,
+			ST_Distance(m.location, ST_SetSRID(ST_MakePoint($%d, $%d), 4326)::geography) as distance
+		FROM merchants m
+		%s
+		ORDER BY distance
+		LIMIT %d OFFSET %d
+	`, lonIdx, latIdx, where, limit, offset)
+
+	rows, err := r.db.Query(ctx, queryMerchants, args...)
+	if err != nil {
+		 return nil, 0, fmt.Errorf("query merchants failed: %w", err)
+	}
+	defer rows.Close()
+
+	merchants := make([]entities.Merchant, 0)
+	for rows.Next() {
+		var m entities.Merchant
+		var distance float64
+		if err := rows.Scan(&m.ID, &m.Name, &m.Category, &m.ImageURL, &m.Location.Lat, &m.Location.Lon, &m.CreatedAt, &distance); err != nil {
+			return nil, 0, fmt.Errorf("scan merchant failed: %w", err)
+		}
+		merchants = append(merchants, m)
+	}
+	if err := rows.Err(); err != nil {
+		 return nil, 0, err
+	}
+
+	if len(merchants) == 0 {
+		return []entities.MerchantWithItems{}, total, nil
+	}
+
 	ids := make([]string, 0, len(merchants))
-	mmap := make(map[string]*entities.MerchantWithItems, len(merchants))
+	mmap := make(map[string]*entities.MerchantWithItems)
 	for _, m := range merchants {
 		ids = append(ids, m.ID)
-		mmap[m.ID] = &entities.MerchantWithItems{
-			Merchant: m,
-			Items:    []entities.MerchantItem{},
-		}
+		mmap[m.ID] = &entities.MerchantWithItems{Merchant: m, Items: []entities.MercItem{}}
 	}
 
 	itemQuery := `
-        SELECT id::text, merchant_id::text, name, category, price, image_url, created_at
-        FROM items
-        WHERE merchant_id = ANY($1)
-        ORDER BY created_at DESC
-    `
+		SELECT id::text, merchant_id::text, name, category, price, imageurl, created_at
+		FROM items
+		WHERE merchant_id = ANY($1)
+		ORDER BY created_at DESC
+	`
+
 	itemRows, err := r.db.Query(ctx, itemQuery, ids)
 	if err != nil {
-		return nil, 0, utils.NewInternal("failed to query items")
+		return nil, 0, fmt.Errorf("query items failed: %w", err)
 	}
 	defer itemRows.Close()
 
 	for itemRows.Next() {
-		var it entities.MerchantItem
-		if err := itemRows.Scan(
-			&it.ID,
-			&it.MerchantID,
-			&it.Name,
-			&it.Category,
-			&it.Price,
-			&it.ImageURL,
-			&it.CreatedAt,
-		); err != nil {
-			return nil, 0, utils.NewInternal("failed to scan item row")
+		var it entities.MercItem
+		if err := itemRows.Scan(&it.ID, &it.MerchantID, &it.Name, &it.Category, &it.Price, &it.ImageURL, &it.CreatedAt); err != nil {
+			return nil, 0, fmt.Errorf("scan item failed: %w", err)
 		}
 		if m, ok := mmap[it.MerchantID]; ok {
 			m.Items = append(m.Items, it)
 		}
 	}
 
-	// Preserve distance order
+	if err := itemRows.Err(); err != nil {
+		return nil, 0, err
+	}
+
 	results := make([]entities.MerchantWithItems, 0, len(merchants))
 	for _, m := range merchants {
 		results = append(results, *mmap[m.ID])
 	}
 
-	return results, len(results), nil
+	return results, total, nil
 }
 
 func (r PurchaseRepository) GetAllMerchantByIDs(ctx context.Context, ids []string) ([]entities.Merchant, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		 return nil, err
 	}
 
 	if len(ids) == 0 {
-		return []entities.Merchant{}, nil
+		 return []entities.Merchant{}, nil
 	}
 
 	rows, err := r.db.Query(ctx, `
-		SELECT id, name, image_url, category,
+		SELECT id, name, imageurl, category,
 		       ST_X(location::geometry) AS lon,
 		       ST_Y(location::geometry) AS lat,
 		       created_at
 		FROM merchants WHERE id = ANY($1)
 	`, ids)
 	if err != nil {
-		return nil, utils.NewInternal("query merchants failed")
+		 return nil, utils.NewInternal("query merchants failed")
 	}
 	defer rows.Close()
 
-	merchants, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (entities.Merchant, error) {
+	merchants := make([]entities.Merchant, 0, len(ids))
+	for rows.Next() {
 		mrc := entities.Merchant{}
-		err := row.Scan(&mrc.ID, &mrc.Name, &mrc.ImageURL, &mrc.Category, &mrc.Location.Long, &mrc.Location.Lat, &mrc.CreatedAt)
-		return mrc, err
-	})
+		err := rows.Scan(
+			&mrc.ID,
+			&mrc.Name,
+			&mrc.ImageURL,
+			&mrc.Category,
+			&mrc.Location.Lon,
+			&mrc.Location.Lat,
+			&mrc.CreatedAt,
+		) 
 
-	if err != nil {
-		return nil, utils.NewInternal("scan merchants failed")
+		if err != nil {
+			 return nil, utils.NewInternal("failed to scan merchant row")
+		}
+
+		merchants = append(merchants, mrc)
+	}
+
+	if err := rows.Err(); err != nil {
+		 return nil, utils.NewInternal("error iterating merchant rows")
 	}
 
 	return merchants, nil
 }
 
-func (r PurchaseRepository) GetAllMercItemByIDs(ctx context.Context, ids []string) ([]entities.MerchantItem, error) {
+func (r PurchaseRepository) GetAllMercItemByIDs(ctx context.Context, ids []string) ([]entities.MercItem, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		 return nil, err
 	}
 
 	if len(ids) == 0 {
-		return []entities.MerchantItem{}, nil
+		 return []entities.MercItem{}, nil
 	}
 
 	rows, err := r.db.Query(ctx, `
-		SELECT id, merchant_id, name, price, image_url, category, created_at
+		SELECT id, merchant_id, name, price, imageurl, category, created_at
 		FROM items
 		WHERE id = ANY($1)
 	`, ids)
 	if err != nil {
-		return nil, utils.NewInternal("query mercItems failed")
+		 return nil, utils.NewInternal("query mercItems failed")
 	}
 	defer rows.Close()
 
-	items, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (entities.MerchantItem, error) {
-		itm := entities.MerchantItem{}
-		err := row.Scan(&itm.ID, &itm.MerchantID, &itm.Name, &itm.Price, &itm.ImageURL, &itm.Category, &itm.CreatedAt)
-		return itm, err
-	})
+	items := make([]entities.MercItem, 0, len(ids))
+	for rows.Next() {
+		itm := entities.MercItem{}
+		err := rows.Scan(
+			&itm.ID,
+			&itm.MerchantID,
+			&itm.Name,
+			&itm.Price,
+			&itm.ImageURL,
+			&itm.Category,
+			&itm.CreatedAt,
+		); 
 
-	if err != nil {
-		return nil, utils.NewInternal("scan mercItems failed")
+		if err != nil {
+			 return nil, utils.NewInternal("failed to scan merchant items row")
+		}
+		
+		items = append(items, itm)
+	}
+
+	if err := rows.Err(); err != nil {
+		 return nil, utils.NewInternal("error iterating merchant items rows")
 	}
 
 	return items, nil
@@ -249,7 +288,7 @@ func (r PurchaseRepository) GetAllMercItemByIDs(ctx context.Context, ids []strin
 
 func (r PurchaseRepository) GetEstimateDataByID(ctx context.Context, id string) (entities.Estimate, error) {
 	if err := ctx.Err(); err != nil {
-		return entities.Estimate{}, err
+		 return entities.Estimate{}, err
 	}
 
 	row := r.db.QueryRow(ctx, `SELECT id, user_id, created_at FROM estimates WHERE id = $1`, id)
@@ -267,50 +306,54 @@ func (r PurchaseRepository) GetEstimateDataByID(ctx context.Context, id string) 
 	return est, nil
 }
 
-func (r PurchaseRepository) CreateEstimateBatch(ctx context.Context, tx pgx.Tx, est entities.Estimate, items []entities.OrderItem) error {
+func (r PurchaseRepository) CreateEstimateBatch(ctx context.Context, tx pgx.Tx, est entities.Estimate, items []entities.OrderItem) (string, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		 return "", err
 	}
 
 	if len(items) == 0 {
-		return nil
+		 return "", nil
 	}
 
 	var estimateID string
-	err := tx.QueryRow(ctx, `INSERT INTO estimates (id, user_id) VALUES ($1, $2) RETURNING id`, est.ID, est.UserID).Scan(&estimateID)
+	err := tx.QueryRow(ctx, `INSERT INTO estimates (user_id) VALUES ($1) RETURNING id`, est.UserID).Scan(&estimateID)
 	if err != nil {
-		return utils.NewInternal("failed to insert estimate")
+		 return "", utils.NewInternal("failed to insert estimate")
 	}
 
 	batch := &pgx.Batch{}
 	for _, it := range items {
 		batch.Queue(`
 			INSERT INTO orders_items (
-				id,
 				estimate_id, 
 				merchant_id, 
 				merchant_item_id, 
 				quantity
 			)
-			VALUES ($1, $2, $3, $4, $5)
-		`, it.ID, estimateID, it.MerchantID, it.MerchantItemID, it.Quantity)
+			VALUES ($1, $2, $3, $4)
+		`, 
+			estimateID, 
+			it.MerchantID, 
+			it.MerchantItemID, 
+			it.Quantity,
+		)
 	}
 
 	br := tx.SendBatch(ctx, batch)
 	defer br.Close()
 	if err := br.Close(); err != nil {
-		return utils.NewInternal("failed to batch insert order items")
+		return "", utils.NewInternal("failed to batch insert order items")
 	}
 
-	return nil
+	return estimateID, nil
 }
 
-func (r PurchaseRepository) CreateOrderFromEsID(ctx context.Context, order entities.Order) error {
+func (r PurchaseRepository) CreateOrderFromEsID(ctx context.Context, tx pgx.Tx, order entities.Order) error {
 	if err := ctx.Err(); err != nil {
-		return err
+		 return err
 	}
 
-	_, err := r.db.Exec(ctx, `INSERT INTO orders (id, estimate_id) VALUES ($1, $2)`, order.ID, order.EstimateID)
+	_, err := tx.Exec(ctx, `INSERT INTO orders (estimate_id) VALUES ($1)`, order.EstimateID)
 	if err != nil {
 		return err
 	}
@@ -318,17 +361,23 @@ func (r PurchaseRepository) CreateOrderFromEsID(ctx context.Context, order entit
 	return nil
 }
 
+type OrderGroup struct {
+	Order *dto.OrderHistory
+	Group map[string]*dto.OrderHistoryMerchant
+}
+
 func (r PurchaseRepository) GetAllOrder(ctx context.Context, filter entities.OrderFilter) ([]dto.OrderHistory, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		 return nil, err
 	}
 
 	limit, offset := filter.Limit, filter.Offset
 	if limit <= 0 {
-		limit = 5
+		 limit = 5
 	}
+
 	if offset < 0 {
-		offset = 0
+		 offset = 0
 	}
 
 	conditions := []string{"user_id = $1"}
@@ -346,14 +395,13 @@ func (r PurchaseRepository) GetAllOrder(ctx context.Context, filter entities.Ord
 		args = append(args, filter.MerchantID)
 		i++
 	}
-
+	
 	if filter.Name != "" {
 		conditions = append(conditions, fmt.Sprintf("(merchant_name ILIKE $%d OR item_name ILIKE $%d)", i, i))
 		args = append(args, "%"+filter.Name+"%")
 		i++
 	}
 
-	where := strings.Join(conditions, " AND ")
 	query := fmt.Sprintf(`
 		SELECT
 			order_id,
@@ -361,101 +409,118 @@ func (r PurchaseRepository) GetAllOrder(ctx context.Context, filter entities.Ord
 			merchant_id,
 			merchant_name,
 			merchant_category,
-			merchant_image_url,
+			merchant_imageurl,
 			merchant_lat,
-			merchant_long,
+			merchant_lon,
 			merchant_created_at,
 			item_id,
 			item_name,
 			item_category,
+			item_imageurl,
 			item_price,
 			quantity,
-			item_image_url,
 			item_created_at
 		FROM order_history_view
 		WHERE %s
 		ORDER BY order_id DESC
 		LIMIT %d OFFSET %d
-	`, where, limit, offset)
+	`, strings.Join(conditions, " AND "), limit, offset)
 
 	rows, err := r.db.Query(ctx, query, args...)
 	if err != nil {
-		return nil, utils.NewInternal("failed to query order history view")
+		 return nil, utils.NewInternal("failed to query order history view")
 	}
 	defer rows.Close()
 
-	type key struct {
-		OrderID, MerchantID string
-	}
-
-	itemsMap := make(map[key][]dto.OrderItemDTO, 10)
-	orderMap := make(map[string][]dto.OrderHistoryMerchant, 10)
-	merchantCache := make(map[string]dto.Merchant, 60)
+	orderMap := make(map[string]*OrderGroup, 512)
+	merchantCache := make(map[string]dto.Merchant, 872)
 
 	for rows.Next() {
-		var d entities.OrderDetail
-		if err := rows.Scan(
-			&d.OrderID,
-			&d.UserID,
-			&d.MerchantID,
-			&d.MerchantName,
-			&d.MerchantCategory,
-			&d.MerchantImageURL,
-			&d.MerchantLat,
-			&d.MerchantLong,
-			&d.MerchantCreatedAt,
-			&d.ItemID,
-			&d.ItemName,
-			&d.ItemCategory,
-			&d.ItemPrice,
-			&d.Quantity,
-			&d.ItemImageURL,
-			&d.ItemCreatedAt,
-		); err != nil {
-			return nil, utils.NewInternal("failed to scan order history row")
+		ord := entities.OrderDetail{}
+		err := rows.Scan(
+			&ord.OrderID,
+			&ord.UserID,
+			&ord.MerchantID,
+			&ord.MerchantName,
+			&ord.MerchantCategory,
+			&ord.MerchantImageURL,
+			&ord.MerchantLat,
+			&ord.MerchantLon,
+			&ord.MerchantCreatedAt,
+			&ord.ItemID,
+			&ord.ItemName,
+			&ord.ItemCategory,
+			&ord.ItemImageURL,
+			&ord.ItemPrice,
+			&ord.Quantity,
+			&ord.ItemCreatedAt,
+		)
+
+		if err != nil {
+			 return nil, utils.NewInternal("failed to scan order history row")
 		}
 
-		if _, exists := merchantCache[d.MerchantID]; !exists {
-			merchantCache[d.MerchantID] = dto.Merchant{
-				ID:        d.MerchantID,
-				Name:      d.MerchantName,
-				Category:  d.MerchantCategory,
-				ImageURL:  d.MerchantImageURL,
-				Location:  dto.Location{Lat: d.MerchantLat, Long: d.MerchantLong},
-				CreatedAt: d.MerchantCreatedAt,
+		mrc,found := merchantCache[ord.MerchantID]
+		if !found {
+			mrc = dto.Merchant{
+				ID:        ord.MerchantID,
+				Name:      ord.MerchantName,
+				CreatedAt: ord.MerchantCreatedAt,
+				Category:  ord.MerchantCategory,
+				ImageURL:  ord.MerchantImageURL,
+				Location: dto.Location{
+					Lat: ord.MerchantLat,
+					Lon: ord.MerchantLon,
+				},
 			}
+			
+			merchantCache[ord.MerchantID] = mrc
 		}
 
-		k := key{OrderID: d.OrderID, MerchantID: d.MerchantID}
-		itemsMap[k] = append(itemsMap[k], dto.OrderItemDTO{
-			ItemID:          d.ItemID,
-			ProductCategory: d.ItemCategory,
-			Name:            d.ItemName,
-			Quantity:        d.Quantity,
-			ImageURL:        d.ItemImageURL,
-			Price:           d.ItemPrice,
-			CreatedAt:       d.ItemCreatedAt,
+		grp,ok := orderMap[ord.OrderID]
+		if !ok {
+			grp = &OrderGroup{
+				Group:make(map[string]*dto.OrderHistoryMerchant, 64),
+				Order:&dto.OrderHistory{
+					OrderID:      ord.OrderID,
+					OrderHistory: make([]dto.OrderHistoryMerchant, 0, 8),
+				},
+			}
+
+			orderMap[ord.OrderID] = grp
+		}
+
+		merchantGroup, ok := grp.Group[ord.MerchantID]
+		if !ok {
+			newGroup := dto.OrderHistoryMerchant{
+				Merchant: mrc,
+				Items:    make([]dto.OrderItem, 0, 16),
+			}
+			grp.Order.OrderHistory = append(grp.Order.OrderHistory, newGroup)
+			merchantGroup = &grp.Order.OrderHistory[len(grp.Order.OrderHistory)-1]
+			grp.Group[ord.MerchantID] = merchantGroup
+		}
+
+		merchantGroup.Items = append(merchantGroup.Items, dto.OrderItem{
+			ItemID:          ord.ItemID,
+			Name:            ord.ItemName,
+			Quantity:        ord.Quantity,
+			ImageURL:        ord.ItemImageURL,
+			ProductCategory: ord.ItemCategory,
+			Price:           ord.ItemPrice,
+			CreatedAt:       ord.ItemCreatedAt,
 		})
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, utils.NewInternal("error iterating order history rows")
-	}
-
-	for k, items := range itemsMap {
-		orderMap[k.OrderID] = append(orderMap[k.OrderID], dto.OrderHistoryMerchant{
-			Merchant: merchantCache[k.MerchantID],
-			Items:    items,
-		})
+		 return nil, utils.NewInternal("error iterating order history rows")
 	}
 
 	result := make([]dto.OrderHistory, 0, len(orderMap))
-	for orderID, orders := range orderMap {
-		result = append(result, dto.OrderHistory{
-			OrderID: orderID,
-			Orders:  orders,
-		})
+	for _, v := range orderMap {
+		 result = append(result, *v.Order)
 	}
 
 	return result, nil
 }
+

@@ -3,8 +3,8 @@ package handlers
 import (
 	"belimang/internal/dto"
 	"belimang/internal/entities"
-	"belimang/internal/middleware"
 	"belimang/internal/services"
+	"belimang/internal/middleware"
 	"belimang/internal/utils"
 	"encoding/json"
 	"net/http"
@@ -15,19 +15,21 @@ import (
 )
 
 type PurchaseHandler struct {
-	service    services.PurchaseService
+	service services.PurchaseService
 	validation *validator.Validate
 }
 
 func NewPurchaseHandler(service services.PurchaseService, validation *validator.Validate) PurchaseHandler {
 	return PurchaseHandler{
-		service:    service,
+		service: service,
 		validation: validation,
 	}
 }
 
 func (h PurchaseHandler) GetNearbyMerchants(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	q := r.URL.Query()
+
 	authCtx, ok := middleware.GetAuthContext(ctx)
 	if !ok {
 		utils.SendErrorResponse(w, http.StatusUnauthorized, "Unauthorized")
@@ -35,24 +37,23 @@ func (h PurchaseHandler) GetNearbyMerchants(w http.ResponseWriter, r *http.Reque
 	}
 
 	latStr := chi.URLParam(r, "lat")
-	longStr := chi.URLParam(r, "long")
+	lonStr := chi.URLParam(r, "lon")
 
 	lat, errLat := strconv.ParseFloat(latStr, 64)
-	long, errLong := strconv.ParseFloat(longStr, 64)
-	if errLat != nil || errLong != nil {
-		utils.SendErrorResponse(w, http.StatusBadRequest, "lat or long is not valid")
+	lon, errLon := strconv.ParseFloat(lonStr, 64)
+	if errLat != nil || errLon != nil {
+		utils.SendErrorResponse(w, http.StatusBadRequest, "lat or lon is not valid")
 		return
 	}
 
-	q := r.URL.Query()
 	limit := 5
-	offset := 0
-
 	if limStr := q.Get("limit"); limStr != "" {
 		if limVal, err := strconv.Atoi(limStr); err == nil && limVal > 0 {
 			limit = limVal
 		}
 	}
+
+	offset := 0
 	if offStr := q.Get("offset"); offStr != "" {
 		if offVal, err := strconv.Atoi(offStr); err == nil && offVal >= 0 {
 			offset = offVal
@@ -61,13 +62,13 @@ func (h PurchaseHandler) GetNearbyMerchants(w http.ResponseWriter, r *http.Reque
 
 	filter := entities.MerchantNearbyFilter{
 		Limit:            limit,
-		Offset:           offset,
 		Name:             q.Get("name"),
 		MerchantID:       q.Get("merchantId"),
 		MerchantCategory: q.Get("merchantCategory"),
+		Offset:           offset,
 		UserID:           authCtx.ID,
 		Lat:              lat,
-		Long:             long,
+		Lon:              lon,
 	}
 
 	resp, err := h.service.GetNearbyMerchants(ctx, filter)
@@ -85,7 +86,7 @@ func (h PurchaseHandler) GetNearbyMerchants(w http.ResponseWriter, r *http.Reque
 
 func (h PurchaseHandler) CreateEstimate(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	req := dto.EstimateRequest{}
+	req := dto.EstimateReq{}
 
 	authCtx, ok := middleware.GetAuthContext(ctx)
 	if !ok {
@@ -137,7 +138,7 @@ func (h PurchaseHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.service.CreateOrder(ctx, req)
+	response, err := h.service.CreateOrder(ctx, req)
 	if err != nil {
 		if appErr, ok := err.(utils.AppError); ok {
 			utils.SendErrorResponse(w, appErr.StatusCode, appErr.Message)
@@ -147,7 +148,7 @@ func (h PurchaseHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	utils.SendResponse(w, http.StatusCreated, resp)
+	utils.SendResponse(w, http.StatusCreated, response)
 }
 
 func (h PurchaseHandler) GetAllOrder(w http.ResponseWriter, r *http.Request) {
@@ -163,14 +164,14 @@ func (h PurchaseHandler) GetAllOrder(w http.ResponseWriter, r *http.Request) {
 	limit := 5
 	if limStr := q.Get("limit"); limStr != "" {
 		if limVal, err := strconv.Atoi(limStr); err == nil && limVal > 0 {
-			limit = limVal
+			 limit = limVal
 		}
 	}
 
 	offset := 0
 	if offStr := q.Get("offset"); offStr != "" {
 		if offVal, err := strconv.Atoi(offStr); err == nil && offVal >= 0 {
-			offset = offVal
+			 offset = offVal
 		}
 	}
 
@@ -183,7 +184,7 @@ func (h PurchaseHandler) GetAllOrder(w http.ResponseWriter, r *http.Request) {
 		Offset:           offset,
 	}
 
-	resp, err := h.service.GetAllOrder(ctx, filter)
+	response, err := h.service.GetAllOrder(ctx, filter)
 	if err != nil {
 		if appErr, ok := err.(utils.AppError); ok {
 			utils.SendErrorResponse(w, appErr.StatusCode, appErr.Message)
@@ -193,5 +194,5 @@ func (h PurchaseHandler) GetAllOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	utils.SendResponse(w, http.StatusOK, resp)
+	utils.SendResponse(w, http.StatusOK, response)
 }

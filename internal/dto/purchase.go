@@ -3,26 +3,26 @@ package dto
 import "time"
 
 type (
-	EstimateRequest struct {
+	EstimateReq struct {
 		UserID       string          `json:"_"`
 		UserPurchase []EstimateOrder `json:"orders" validate:"required,dive"`
 		UserLocation Location        `json:"userLocation" validate:"required"`
 	}
 
-	EstimateResponse struct {
+	EstimateRes struct {
 		TotalPrice                   int    `json:"totalPrice"`
 		CalculatedEstimateId         string `json:"calculatedEstimateId"`
 		EstimatedDeliveryTimeMinutes int    `json:"estimatedDeliveryTimeInMinutes"`
 	}
 
 	EstimateOrder struct {
+		IsStartingPoint bool                `json:"isStartingPoint" validate:"boolean"`
 		OrderItems      []EstimateOrderItem `json:"items" validate:"required,dive"`
 		MerchantID      string              `json:"merchantId" validate:"required"`
-		IsStartingPoint bool                `json:"isStartingPoint" validate:"boolean"`
 	}
 
 	EstimateOrderItem struct {
-		ItemID       string `json:"itemId" validate:"required"`
+		ItemID       string `json:"itemId"   validate:"required"`
 		ItemQuantity int    `json:"quantity" validate:"required,gt=0"`
 	}
 
@@ -35,16 +35,16 @@ type (
 	}
 
 	OrderHistory struct {
-		OrderID string                 `json:"orderId"`
-		Orders  []OrderHistoryMerchant `json:"orders"`
+		OrderID      string                 `json:"orderId"`
+		OrderHistory []OrderHistoryMerchant `json:"orders"`
 	}
 
 	OrderHistoryMerchant struct {
-		Merchant Merchant       `json:"merchant"`
-		Items    []OrderItemDTO `json:"items"`
+		Merchant Merchant    `json:"merchant"`
+		Items    []OrderItem `json:"items"`
 	}
 
-	OrderItemDTO struct {
+	OrderItem struct {
 		ItemID          string    `json:"itemId"`
 		ProductCategory string    `json:"productCategory"`
 		Name            string    `json:"name"`

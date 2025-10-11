@@ -12,6 +12,27 @@ type MerchantService struct {
 	repository repository.MerchantRepository
 }
 
+func (s MerchantService) GetAllMerchant(ctx context.Context, req entities.MerchantFilter) (dto.MerchantResponse, error) {
+	if err := ctx.Err(); err != nil {
+		 return dto.MerchantResponse{}, err
+	}
+
+	return s.repository.GetAllMerchant(ctx, req)
+}
+
+func (s MerchantService) GetAllMercItem(ctx context.Context, req entities.MercItemFilter, merchantId string) (dto.MercItemResponse, error) {
+	if err := ctx.Err(); err != nil {
+		 return dto.MercItemResponse{}, err
+	}
+
+	_, err := s.repository.GetMerchantById(ctx, merchantId)
+	if err != nil {
+		 return dto.MercItemResponse{}, utils.NewNotFound("merchant does not exist")
+	}
+
+	return s.repository.GetAllMercItem(ctx, merchantId, req)
+}
+
 func NewMerchantService(repository repository.MerchantRepository) MerchantService {
 	return MerchantService{
 		repository: repository,
@@ -31,11 +52,11 @@ func (s MerchantService) CreateMerchant(ctx context.Context, req entities.Mercha
 
 	merchants, err := s.repository.CreateMerchant(ctx, tx, req)
 	if err != nil {
-		return dto.CreateMerchantResponse{}, err
+		 return dto.CreateMerchantResponse{}, err
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return dto.CreateMerchantResponse{}, err
+		 return dto.CreateMerchantResponse{}, err
 	}
 
 	return dto.CreateMerchantResponse{
@@ -43,15 +64,7 @@ func (s MerchantService) CreateMerchant(ctx context.Context, req entities.Mercha
 	}, nil
 }
 
-func (s MerchantService) GetAllMerchant(ctx context.Context, req entities.MerchantFilter) (dto.MerchantResponse, error) {
-	if err := ctx.Err(); err != nil {
-		 return dto.MerchantResponse{}, err
-	}
-
-	return s.repository.GetAllMerchant(ctx, req)
-}
-
-func (s MerchantService) CreateMercItem(ctx context.Context, req entities.MerchantItem) (dto.CreateMercItemResponse, error) {
+func (s MerchantService) CreateMercItem(ctx context.Context, req entities.MercItem) (dto.CreateMercItemResponse, error) {
 	if err := ctx.Err(); err != nil {
 		 return dto.CreateMercItemResponse{}, err
 	}
@@ -79,17 +92,4 @@ func (s MerchantService) CreateMercItem(ctx context.Context, req entities.Mercha
 	return dto.CreateMercItemResponse{
 		ID: merchantItem.ID,
 	}, nil
-}
-
-func (s MerchantService) GetAllMercItem(ctx context.Context, merchantId string, req entities.MerchantItemFilter) (dto.MercItemResponse, error) {
-	if err := ctx.Err(); err != nil {
-		 return dto.MercItemResponse{}, err
-	}
-
-	_, err := s.repository.GetMerchantById(ctx, merchantId)
-	if err != nil {
-		 return dto.MercItemResponse{}, utils.NewNotFound("merchant does not exist")
-	}
-
-	return s.repository.GetAllMercItem(ctx, merchantId, req)
 }

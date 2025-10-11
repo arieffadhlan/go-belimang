@@ -35,7 +35,7 @@ func main() {
 		}
 	}()
 
-	minioClient, err := config.InitMCConncection(cfg)
+	mnc, err := config.InitMCConncection(cfg)
 	if err != nil {
 		 log.Fatal().Err(err)
 	}
@@ -56,7 +56,7 @@ func main() {
 
 	hashingPool := services.NewHashingPool(2, 40)
 	authService := services.NewAuthService(authRepository, hashingPool)
-	fileService := services.NewFileService(minioClient, cfg)
+	fileService := services.NewFileService(mnc, cfg)
 	merchantService := services.NewMerchantService(merchantRepository)
 	purchaseService := services.NewPurchaseService(purchaseRepository)
 
