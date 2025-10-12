@@ -6,6 +6,7 @@ import (
 	"belimang/internal/repository"
 	"belimang/internal/route"
 	"belimang/internal/services"
+	"belimang/internal/utils"
 	"context"
 	"net/http"
 	"os/signal"
@@ -21,58 +22,58 @@ import (
 func main() {
 	cfg, err := config.LoadAllAppConfig()
 	if err != nil {
-		log.Fatal().Err(err)
+		 log.Fatal().Err(err)
 	}
 
 	dbp, err := config.InitDBConnection(cfg)
 	if err != nil {
-		log.Fatal().Err(err)
+		 log.Fatal().Err(err)
 	}
 	defer func() {
 		if dbp != nil {
-			dbp.Close()
+			 dbp.Close()
 		}
 	}()
 
-	minioClient, err := config.InitMCConncection(cfg)
+	mnc, err := config.InitMCConncection(cfg)
 	if err != nil {
-		log.Fatal().Err(err)
+		 log.Fatal().Err(err)
 	}
 
 	v := validator.New()
+	utils.RegisterCustomValidations(v)
 
 	r := chi.NewRouter()
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Logger)
+	r.Use(middleware.Recoverer)
 
 	repository.SetPool(dbp)
 
 	authRepository := repository.NewAuthRepository(dbp)
-	// merchantRepository := repository.NewMerchantRepository(db)
-	// purchaseRepository := repository.NewPurchaseRepository(db)
+	merchantRepository := repository.NewMerchantRepository(dbp)
+	purchaseRepository := repository.NewPurchaseRepository(dbp)
 
 	hashingPool := services.NewHashingPool(2, 40)
 	authService := services.NewAuthService(authRepository, hashingPool)
-	fileService := services.NewFileService(minioClient, cfg)
-	// merchantService := services.NewMerchantService(merchantRepository)
-	// purchaseService := services.NewPurchaseService(purchaseRepository)
+	fileService := services.NewFileService(mnc, cfg)
+	merchantService := services.NewMerchantService(merchantRepository)
+	purchaseService := services.NewPurchaseService(purchaseRepository)
 
-	authHandler := handlers.NewAuthHandler(authService, v)
 	fileHandler := handlers.NewFileHandler(fileService)
-	// merchantHandler := handlers.NewMerchantHandler(merchantService, v)
-	// purchaseHandler := handlers.NewPurchaseHandler(purchaseService, v)
+	authHandler := handlers.NewAuthHandler(authService, v)
+	merchantHandler := handlers.NewMerchantHandler(merchantService, v)
+	purchaseHandler := handlers.NewPurchaseHandler(purchaseService, v)
 
-	r.Route("/v1", func(v1 chi.Router) {
-		v1.Get("/health-check", func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{"status":"ok"}`))
-		})
-
-		route.RegisterAuthRoutes(v1, authHandler)
-		route.RegisterFileRoutes(v1, &fileHandler)
-		// route.RegisterMerchantRoutes(v1, merchantHandler)
-		// route.RegisterPurchaseRoutes(v1, purchaseHandler)
+	r.Get("/health-check", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"status":"ok"}`))
 	})
+
+	route.RegisterAuthRoutes(r, authHandler)
+	route.RegisterFileRoutes(r, fileHandler)
+	route.RegisterMerchantRoutes(r, merchantHandler)
+	route.RegisterPurchaseRoutes(r, purchaseHandler)
 
 	server := http.Server{
 		Addr:        cfg.Host + ":" + cfg.Port,

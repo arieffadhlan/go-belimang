@@ -1,6 +1,7 @@
 -- +goose Up
 -- +goose StatementBegin
-SELECT 'up SQL query';
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 CREATE TABLE users (
     id UUID NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
     email VARCHAR(32) NOT NULL,
@@ -12,7 +13,7 @@ CREATE TABLE users (
 
 -- +goose Down
 -- +goose StatementBegin
-SELECT 'down SQL query';
-
 DROP TABLE IF EXISTS users;
+
+DROP EXTENSION IF EXISTS pgcrypto CASCADE;
 -- +goose StatementEnd

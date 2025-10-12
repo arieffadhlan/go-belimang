@@ -68,8 +68,10 @@ func InitDBConnection(cfg Config) (*pgxpool.Pool, error) {
 
 	poolCfg.MaxConns = 50
 	poolCfg.MinConns = 10
-	poolCfg.MaxConnLifetime = 30 * time.Minute
-	poolCfg.MaxConnIdleTime = 10 * time.Minute
+	poolCfg.MaxConnIdleTime = 20 * time.Minute
+	poolCfg.MaxConnLifetime = 45 * time.Minute
+	poolCfg.ConnConfig.ConnectTimeout = 1 * time.Second
+	poolCfg.HealthCheckPeriod = 1 * time.Minute
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

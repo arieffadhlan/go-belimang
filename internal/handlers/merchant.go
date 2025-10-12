@@ -15,19 +15,110 @@ import (
 )
 
 type MerchantHandler struct {
-	service    services.MerchantService
+	service services.MerchantService
 	validation *validator.Validate
 }
 
-func NewMerchantHandler(service services.MerchantService) MerchantHandler {
+func NewMerchantHandler(service services.MerchantService, validation *validator.Validate) MerchantHandler {
 	return MerchantHandler{
 		service: service,
+		validation: validation,
 	}
+}
+
+func (h MerchantHandler) GetAllMerchant(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+
+	limit := 5
+	if limStr := q.Get("limit"); limStr != "" {
+		if limVal, err := strconv.Atoi(limStr); err == nil && limVal > 0 {
+			 limit = limVal
+		}
+	}
+
+	offset := 0
+	if offStr := q.Get("offset"); offStr != "" {
+		if offVal, err := strconv.Atoi(offStr); err == nil && offVal > 0 {
+			 offset = offVal
+		}
+	}
+
+	createdAt := strings.ToLower(q.Get("createdAt"))
+	if createdAt != "" && createdAt != "asc" && createdAt != "desc" {
+		 createdAt = ""
+	}
+
+	filter := entities.MerchantFilter{
+		Limit:            limit,
+		CreatedAt:        createdAt,
+		Name:             q.Get("name"),
+		MerchantID:       q.Get("merchantId"),
+		MerchantCategory: q.Get("merchantCategory"),
+		Offset:           offset,
+	}
+
+	merchant, err := h.service.GetAllMerchant(r.Context(), filter)
+	if err != nil {
+		if appErr, ok := err.(utils.AppError); ok {
+			utils.SendErrorResponse(w, appErr.StatusCode, appErr.Message)
+		} else {
+			utils.SendErrorResponse(w, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+
+	utils.SendResponse(w, http.StatusOK, merchant)
+}
+
+func (h MerchantHandler) GetAllMercItem(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+
+	limit := 5
+	if limStr := q.Get("limit"); limStr != "" {
+		if limVal, err := strconv.Atoi(limStr); err == nil && limVal > 0 {
+			 limit = limVal
+		}
+	}
+
+	offset := 0
+	if offStr := q.Get("offset"); offStr != "" {
+		if offVal, err := strconv.Atoi(offStr); err == nil && offVal > 0 {
+			 offset = offVal
+		}
+	}
+
+	createdAt := strings.ToLower(q.Get("createdAt"))
+	if createdAt != "" && createdAt != "asc" && createdAt != "desc" {
+		 createdAt = ""
+	}
+
+	filter := entities.MercItemFilter{
+		Limit:           limit,
+		CreatedAt:       createdAt,
+		Name:            q.Get("name"),
+		ItemID:          q.Get("itemId"),
+		ProductCategory: q.Get("productCategory"),
+		Offset:          offset,
+	}
+
+	merchantId := chi.URLParam(r, "merchantId")
+
+	merchantItems, err := h.service.GetAllMercItem(r.Context(), filter, merchantId)
+	if err != nil {
+		if appErr, ok := err.(utils.AppError); ok {
+			utils.SendErrorResponse(w, appErr.StatusCode, appErr.Message)
+		} else {
+			utils.SendErrorResponse(w, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+
+	utils.SendResponse(w, http.StatusOK, merchantItems)
 }
 
 func (h MerchantHandler) CreateMerchant(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	req := dto.MerchantCreateRequest{}
+	req := dto.CreateMerchantRequest{}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		utils.SendErrorResponse(w, http.StatusBadRequest, err.Error())
@@ -40,62 +131,16 @@ func (h MerchantHandler) CreateMerchant(w http.ResponseWriter, r *http.Request) 
 	}
 
 	merchant := entities.Merchant{
-		Name:             req.Name,
-		MerchantCategory: entities.MerchantCategory(req.MerchantCategory),
-		ImageURL:         req.ImageURL,
+		Name:     req.Name,
+		ImageURL: req.ImageURL,
+		Category: req.MerchantCategory,
 		Location: entities.Location{
-			Lat:  req.Location.Lat,
-			Long: req.Location.Long,
+			Lat: req.Location.Lat, 
+			Lon: req.Location.Lon,
 		},
 	}
 
-	mrc, err := h.service.CreateMerchant(ctx, merchant)
-	if err != nil {
-		if appErr, ok := err.(utils.AppError); ok {
-			utils.SendErrorResponse(w, appErr.StatusCode, appErr.Message)
-		} else {
-			utils.SendErrorResponse(w, http.StatusInternalServerError, err.Error())
-		}
-
-		return
-	}
-
-	utils.SendResponse(w, http.StatusCreated, mrc)
-}
-
-func (h MerchantHandler) GetAllMerchant(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	q := r.URL.Query()
-
-	filter := entities.MerchantFilter{
-		MerchantID:       q.Get("merchantId"),
-		Name:             q.Get("name"),
-		MerchantCategory: q.Get("merchantCategory"),
-		SortCreatedAt:    strings.ToLower(q.Get("createdAt")),
-	}
-
-	// Parse limit
-	if l := q.Get("limit"); l != "" {
-		if val, err := strconv.Atoi(l); err == nil {
-			filter.Limit = val
-		} else {
-			utils.SendErrorResponse(w, http.StatusBadRequest, "invalid limit parameter")
-			return
-		}
-	}
-
-	// Parse offset
-	if o := q.Get("offset"); o != "" {
-		if val, err := strconv.Atoi(o); err == nil {
-			filter.Offset = val
-		} else {
-			utils.SendErrorResponse(w, http.StatusBadRequest, "invalid offset parameter")
-			return
-		}
-	}
-
-	// Call service
-	merchants, err := h.service.GetMerchants(ctx, filter)
+	merchantId, err := h.service.CreateMerchant(ctx, merchant)
 	if err != nil {
 		if appErr, ok := err.(utils.AppError); ok {
 			utils.SendErrorResponse(w, appErr.StatusCode, appErr.Message)
@@ -105,13 +150,12 @@ func (h MerchantHandler) GetAllMerchant(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Always return 200 with list (can be empty)
-	utils.SendResponse(w, http.StatusOK, merchants)
+	utils.SendResponse(w, http.StatusCreated, merchantId)
 }
 
-func (h MerchantHandler) CreateMerchantItems(w http.ResponseWriter, r *http.Request) {
+func (h MerchantHandler) CreateMercItem(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	req := dto.ItemMerchantRequest{}
+	req := dto.CreateMercItemRequest{}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		utils.SendErrorResponse(w, http.StatusBadRequest, err.Error())
@@ -125,63 +169,15 @@ func (h MerchantHandler) CreateMerchantItems(w http.ResponseWriter, r *http.Requ
 
 	merchantId := chi.URLParam(r, "merchantId")
 
-	item := entities.MerchantItem{
-		Name:            req.Name,
-		ProductCategory: entities.ProductCategory(req.ProductCategory),
-		Price:           req.Price,
-		ImageURL:        req.ImageURL,
-		MerchantID:      merchantId,
+	item := entities.MercItem{
+		MerchantID: merchantId,
+		Name:       req.Name,
+		Category:   req.ProductCategory,
+		ImageURL:   req.ImageURL,
+		Price:      req.Price,
 	}
 
-	itm, err := h.service.CreateMerchantItems(ctx, item)
-	if err != nil {
-		if appErr, ok := err.(utils.AppError); ok {
-			utils.SendErrorResponse(w, appErr.StatusCode, appErr.Message)
-		} else {
-			utils.SendErrorResponse(w, http.StatusInternalServerError, err.Error())
-		}
-
-		return
-	}
-
-	utils.SendResponse(w, http.StatusCreated, itm)
-}
-
-func (h MerchantHandler) GetAllMerchantItems(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	q := r.URL.Query()
-
-	filter := entities.ItemFilter{
-		Name:            q.Get("name"),
-		SortCreatedAt:   strings.ToLower(q.Get("createdAt")),
-		ItemID:          q.Get("itemId"),
-		ProductCategory: q.Get("productCategory"),
-	}
-
-	// Parse limit
-	if l := q.Get("limit"); l != "" {
-		if val, err := strconv.Atoi(l); err == nil {
-			filter.Limit = val
-		} else {
-			utils.SendErrorResponse(w, http.StatusBadRequest, "invalid limit parameter")
-			return
-		}
-	}
-
-	// Parse offset
-	if o := q.Get("offset"); o != "" {
-		if val, err := strconv.Atoi(o); err == nil {
-			filter.Offset = val
-		} else {
-			utils.SendErrorResponse(w, http.StatusBadRequest, "invalid offset parameter")
-			return
-		}
-	}
-
-	merchantId := chi.URLParam(r, "merchantId")
-
-	// Call service
-	merchants, err := h.service.GetAllMerchantItems(ctx, merchantId, filter)
+	merchantItemId, err := h.service.CreateMercItem(ctx, item)
 	if err != nil {
 		if appErr, ok := err.(utils.AppError); ok {
 			utils.SendErrorResponse(w, appErr.StatusCode, appErr.Message)
@@ -191,6 +187,5 @@ func (h MerchantHandler) GetAllMerchantItems(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Always return 200 with list (can be empty)
-	utils.SendResponse(w, http.StatusOK, merchants)
+	utils.SendResponse(w, http.StatusCreated, merchantItemId)
 }

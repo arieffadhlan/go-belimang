@@ -38,7 +38,7 @@ func (h AuthHandler) SignUp(w http.ResponseWriter, r *http.Request, role string)
 	}
 
 	usr := entities.User{
-		Email: 	req.Email,
+		Email:    req.Email,
 		IsAdmin:  role == "admin",
 		Username: req.Username,
 		Password: req.Password,
